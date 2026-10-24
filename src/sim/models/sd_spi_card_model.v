@@ -1,0 +1,119 @@
+`timescale 1ns/1ps
+// Test-only SD card peer for initialization and CMD17. Not a vendor card model.
+// Configurable legacy/SDSC/SDHC, delayed ACMD41, CRC damage and card removal.
+module sd_spi_card_model (
+    input wire I_ncs,I_sclk,I_mosi,
+    output wire O_miso,
+    input wire I_present,I_legacy,I_high_capacity,I_allow_init,I_corrupt_crc,
+    output reg [31:0] O_read_count=0,O_last_lba=0,O_probe_count=0,
+    output reg [31:0] O_cmd16_count=0,O_acmd41_count=0,
+    output reg O_protocol_error=0
+);
+    reg [7:0] S_queue[0:1023],S_packet[0:5];
+    reg [7:0] S_tx=8'hff,S_rx=0;
+    integer S_qread=0,S_qwrite=0,S_bits=0,S_packet_count=0,S_attempts=0;
+    reg S_idle=1,S_app=0,S_selected=0;
+    assign O_miso=(!I_present || !S_selected || I_ncs) ? 1'b1 : S_tx[7];
+    task push;
+        input [7:0] byte_value;
+        begin
+            if(S_qwrite<1024) begin S_queue[S_qwrite]=byte_value; S_qwrite=S_qwrite+1; end
+            else O_protocol_error=1;
+        end
+    endtask
+    function [15:0] crc_byte;
+        input [15:0] previous;
+        input [7:0] byte_value;
+        reg [15:0] crc;
+        reg [127:0] csd;
+        integer bit_index;
+        begin
+            crc=previous^{byte_value,8'd0};
+            for(bit_index=0;bit_index<8;bit_index=bit_index+1)
+                if(crc[15]) crc=(crc<<1)^16'h1021; else crc=crc<<1;
+            crc_byte=crc;
+        end
+    endfunction
+    task command;
+        input [7:0] last;
+        integer cmd,k;
+        reg [31:0] arg,lba;
+        reg [7:0] value;
+        reg [15:0] crc;
+        begin
+            cmd=S_packet[0]&63; arg={S_packet[1],S_packet[2],S_packet[3],S_packet[4]};
+            if(!last[0]) O_protocol_error=1;
+            push(8'hff);
+            case(cmd)
+                0: begin
+                    if(arg!=0 || last!=8'h95) O_protocol_error=1;
+                    S_idle=1; S_app=0; S_attempts=0; push(1);
+                end
+                8: begin
+                    if(arg!=32'h1aa || last!=8'h87) O_protocol_error=1;
+                    if(I_legacy) push(5);
+                    else begin push(1); push(0); push(0); push(1); push(8'haa); end
+                end
+                55: begin S_app=1; push(S_idle ? 1 : 0); end
+                41: begin
+                    if(!S_app || (I_legacy ? arg!=0 : arg!=32'h40000000)) O_protocol_error=1;
+                    S_app=0; S_attempts=S_attempts+1; O_acmd41_count=O_acmd41_count+1;
+                    if(S_attempts>=3 && I_allow_init) S_idle=0;
+                    push(S_idle ? 1 : 0);
+                end
+                58: begin
+                    push(S_idle ? 1 : 0); push((!I_legacy && I_high_capacity) ? 8'hc0 : 8'h80);
+                    push(8'hff); push(8'h80); push(0);
+                end
+                16: begin
+                    O_cmd16_count=O_cmd16_count+1;
+                    if(arg!=512 || (!I_legacy && I_high_capacity)) O_protocol_error=1;
+                    push(0);
+                end
+                13: begin O_probe_count=O_probe_count+1; push(S_idle ? 1 : 0); push(0); end
+                9: begin
+                    csd=0; csd[0]=1; csd[83:80]=9;
+                    if(!I_legacy && I_high_capacity) begin csd[127:126]=1; csd[69:48]=22'd8191; end
+                    else begin csd[73:62]=12'd1023; csd[49:47]=3'd7; end
+                    // SDHC: 8,388,608 sectors; SDSC: 524,288 sectors.
+                    push(0); push(8'hff); push(8'hfe); crc=0;
+                    for(k=15;k>=0;k=k-1) begin value=csd[k*8+:8]; push(value); crc=crc_byte(crc,value); end
+                    push(crc[15:8]); push(crc[7:0]);
+                end
+                17: begin
+                    if(S_idle) begin O_protocol_error=1; push(1); end
+                    else begin
+                        lba=(!I_legacy && I_high_capacity) ? arg : arg>>9;
+                        if((I_legacy || !I_high_capacity) && arg[8:0]!=0) O_protocol_error=1;
+                        O_last_lba=lba; O_read_count=O_read_count+1;
+                        push(0); push(8'hff); push(8'hfe); crc=0;
+                        for(k=0;k<512;k=k+1) begin value=lba+k; push(value); crc=crc_byte(crc,value); end
+                        push(crc[15:8]); push(crc[7:0]^(I_corrupt_crc ? 8'h01 : 8'h00));
+                    end
+                end
+                default: begin O_protocol_error=1; push(4); end
+            endcase
+        end
+    endtask
+    always @(negedge I_ncs) begin
+        S_selected=I_present;
+        S_qread=0; S_qwrite=0; S_bits=0; S_packet_count=0; S_tx=8'hff; S_rx=0;
+    end
+    always @(negedge I_present) begin S_selected=0; S_idle=1; S_app=0; S_attempts=0; end
+    always @(posedge I_sclk) if(!I_ncs && I_present && S_selected) begin
+        S_rx={S_rx[6:0],I_mosi}; S_bits=S_bits+1;
+        if(S_bits==8) begin
+            S_bits=0;
+            if(S_packet_count==0) begin
+                if(S_rx[7:6]==1) begin S_packet[0]=S_rx; S_packet_count=1; end
+            end else if(S_packet_count==5) begin command(S_rx); S_packet_count=0; end
+            else begin S_packet[S_packet_count]=S_rx; S_packet_count=S_packet_count+1; end
+        end
+    end
+    always @(negedge I_sclk) if(!I_ncs && I_present && S_selected) begin
+        if(S_bits==0) begin
+            if(S_qread<S_qwrite) begin S_tx=S_queue[S_qread]; S_qread=S_qread+1; end
+            else S_tx=8'hff;
+        end else S_tx={S_tx[6:0],1'b1};
+    end
+endmodule

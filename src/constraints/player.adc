@@ -1,0 +1,34 @@
+# Physical player entry. Source: design 02 pin table and lab_ex5_i2s pin.adc.
+# Verify actual board revision, switch polarity, HPD and DDC electricals before use.
+set_pin_assignment { I_clk_50m } { LOCATION = R7; IOSTANDARD = LVCMOS33; PULLTYPE = NONE; }
+set_pin_assignment { I_uart_rx } { LOCATION = F12; IOSTANDARD = LVCMOS33; PULLTYPE = NONE; }
+set_pin_assignment { O_uart_tx } { LOCATION = D12; IOSTANDARD = LVCMOS33; PULLTYPE = NONE; }
+set_pin_assignment { I_key_n[0] } { LOCATION = A2; IOSTANDARD = LVCMOS33; PULLTYPE = NONE; }
+set_pin_assignment { I_key_n[1] } { LOCATION = B2; IOSTANDARD = LVCMOS33; PULLTYPE = NONE; }
+set_pin_assignment { I_key_n[2] } { LOCATION = B1; IOSTANDARD = LVCMOS33; PULLTYPE = NONE; }
+set_pin_assignment { I_key_n[3] } { LOCATION = C1; IOSTANDARD = LVCMOS33; PULLTYPE = NONE; }
+set_pin_assignment { I_switch[0] } { LOCATION = C8; IOSTANDARD = LVCMOS33; PULLTYPE = NONE; }
+set_pin_assignment { I_switch[1] } { LOCATION = C7; IOSTANDARD = LVCMOS33; PULLTYPE = NONE; }
+set_pin_assignment { I_switch[2] } { LOCATION = C6; IOSTANDARD = LVCMOS33; PULLTYPE = NONE; }
+set_pin_assignment { I_switch[3] } { LOCATION = C5; IOSTANDARD = LVCMOS33; PULLTYPE = NONE; }
+set_pin_assignment { O_led[0] } { LOCATION = A4; IOSTANDARD = LVCMOS33; PULLTYPE = NONE; }
+set_pin_assignment { O_led[1] } { LOCATION = A3; IOSTANDARD = LVCMOS33; PULLTYPE = NONE; }
+set_pin_assignment { O_led[2] } { LOCATION = C10; IOSTANDARD = LVCMOS33; PULLTYPE = NONE; }
+set_pin_assignment { O_led[3] } { LOCATION = B12; IOSTANDARD = LVCMOS33; PULLTYPE = NONE; }
+set_pin_assignment { O_tf_ncs } { LOCATION = A12; IOSTANDARD = LVCMOS33; PULLTYPE = NONE; }
+set_pin_assignment { O_tf_sclk } { LOCATION = A14; IOSTANDARD = LVCMOS33; PULLTYPE = NONE; }
+set_pin_assignment { O_tf_mosi } { LOCATION = A13; IOSTANDARD = LVCMOS33; PULLTYPE = NONE; }
+set_pin_assignment { I_tf_miso } { LOCATION = B14; IOSTANDARD = LVCMOS33; PULLTYPE = NONE; }
+set_pin_assignment { I_hdmi_hpd } { LOCATION = J6; IOSTANDARD = LVCMOS33; PULLTYPE = NONE; }
+set_pin_assignment { O_hdmi_clk_p } { LOCATION = C3; IOSTANDARD = LVDS33; PULLTYPE = NONE; }
+set_pin_assignment { O_hdmi_d0_p } { LOCATION = G5; IOSTANDARD = LVDS33; PULLTYPE = NONE; }
+set_pin_assignment { O_hdmi_d1_p } { LOCATION = F1; IOSTANDARD = LVDS33; PULLTYPE = NONE; }
+set_pin_assignment { O_hdmi_d2_p } { LOCATION = E1; IOSTANDARD = LVDS33; PULLTYPE = NONE; }
+set_pin_assignment { O_hdmi_scl } { LOCATION = P2; IOSTANDARD = LVCMOS33; DRIVESTRENGTH = 8; PULLTYPE = PULLUP; }
+set_pin_assignment { IO_hdmi_sda } { LOCATION = R2; IOSTANDARD = LVCMOS33; DRIVESTRENGTH = 8; PULLTYPE = PULLUP; }
+set_pin_assignment { O_flash_cs_n } { LOCATION = P8; IOSTANDARD = LVCMOS33; PULLTYPE = NONE; }
+set_pin_assignment { O_flash_sclk } { LOCATION = M9; IOSTANDARD = LVCMOS33; PULLTYPE = NONE; }
+set_pin_assignment { O_flash_mosi } { LOCATION = P7; IOSTANDARD = LVCMOS33; PULLTYPE = NONE; }
+set_pin_assignment { I_flash_miso } { LOCATION = N8; IOSTANDARD = LVCMOS33; PULLTYPE = NONE; }
+set_pin_assignment { O_flash_wp_n } { LOCATION = P9; IOSTANDARD = LVCMOS33; PULLTYPE = NONE; }
+set_pin_assignment { O_flash_hold_n } { LOCATION = R9; IOSTANDARD = LVCMOS33; PULLTYPE = NONE; }

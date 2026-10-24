@@ -1,0 +1,16 @@
+# Diagnostic subset of docs/design/02 and the lab_ex5_i2s reference pin.adc.
+# Board revision, differential pair mapping and DDC electricals still need review.
+set_pin_assignment { I_clk_50m } { LOCATION = R7; IOSTANDARD = LVCMOS33; PULLTYPE = NONE; }
+set_pin_assignment { I_key_reset_n } { LOCATION = A2; IOSTANDARD = LVCMOS33; PULLTYPE = NONE; }
+set_pin_assignment { I_pattern_sw[0] } { LOCATION = C8; IOSTANDARD = LVCMOS33; PULLTYPE = NONE; }
+set_pin_assignment { I_pattern_sw[1] } { LOCATION = C7; IOSTANDARD = LVCMOS33; PULLTYPE = NONE; }
+set_pin_assignment { O_led[0] } { LOCATION = A4; IOSTANDARD = LVCMOS33; PULLTYPE = NONE; }
+set_pin_assignment { O_led[1] } { LOCATION = A3; IOSTANDARD = LVCMOS33; PULLTYPE = NONE; }
+set_pin_assignment { O_led[2] } { LOCATION = C10; IOSTANDARD = LVCMOS33; PULLTYPE = NONE; }
+set_pin_assignment { O_led[3] } { LOCATION = B12; IOSTANDARD = LVCMOS33; PULLTYPE = NONE; }
+set_pin_assignment { O_hdmi_clk_p } { LOCATION = C3; IOSTANDARD = LVDS33; PULLTYPE = NONE; }
+set_pin_assignment { O_hdmi_d0_p } { LOCATION = G5; IOSTANDARD = LVDS33; PULLTYPE = NONE; }
+set_pin_assignment { O_hdmi_d1_p } { LOCATION = F1; IOSTANDARD = LVDS33; PULLTYPE = NONE; }
+set_pin_assignment { O_hdmi_d2_p } { LOCATION = E1; IOSTANDARD = LVDS33; PULLTYPE = NONE; }
+set_pin_assignment { O_hdmi_scl } { LOCATION = P2; IOSTANDARD = LVCMOS33; DRIVESTRENGTH = 8; PULLTYPE = PULLUP; }
+set_pin_assignment { IO_hdmi_sda } { LOCATION = R2; IOSTANDARD = LVCMOS33; DRIVESTRENGTH = 8; PULLTYPE = PULLUP; }

@@ -1,0 +1,10 @@
+/p0_hdmi_Runs/
+/p0_hdmi.runs/
+/p0_hdmi.cache/
+/*.log
+/*.jou
+/*.bit
+/*.db
+/*.al.bak
+/*.al.user
+/*.lck
