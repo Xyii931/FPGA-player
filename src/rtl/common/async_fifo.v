@@ -48,8 +48,11 @@ module async_fifo #(
     reset_sync u_read_reset (
         .I_clk(I_read_clk),.I_async_reset(I_async_reset),.O_reset(S_read_reset));
     assign O_write_full = S_write_gray == S_full_compare;
-    assign O_write_ready = !I_async_reset && !S_write_reset && !O_write_full;
-    assign O_read_valid = !I_async_reset && !S_read_reset && S_read_valid;
+    // Both local resets assert asynchronously and release on their own clock.
+    // Use those local levels for datapath gating; the shared request must not
+    // bypass reset synchronization into another domain's ready/valid logic.
+    assign O_write_ready = !S_write_reset && !O_write_full;
+    assign O_read_valid = !S_read_reset && S_read_valid;
     assign O_read_empty = !O_read_valid;
     assign O_read_data = S_read_data;
     assign O_write_level = S_write_binary - gray_to_binary(S_read_gray_sync);

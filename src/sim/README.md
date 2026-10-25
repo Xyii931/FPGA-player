@@ -1,6 +1,6 @@
 # FPGA-player 功能自检
 
-本目录提供播放器和基础诊断使用的22项ModelSim自检。默认套件为 `Lean`，从仓库根目录运行：
+本目录提供播放器和基础诊断使用的23项ModelSim自检。默认套件为 `Lean`，从仓库根目录运行：
 
 ```powershell
 & ./src/sim/run_p0.ps1 -Suite P0
@@ -19,14 +19,16 @@
 | 套件 | 项数 | 范围 |
 |---|---:|---|
 | `P0` | 4 | reset_sync、reset_gen、PLL树、基础HDMI视频源 |
-| `Storage` | 8 | SPI字节、SD PHY/CSD/扇区、扇区CDC、FAT挂载/簇链/文件 |
+| `Storage` | 9 | SPI字节、SD PHY/CSD/扇区、扇区CDC、FAT挂载/簇链/文件、原生SDRAM |
 | `Media` | 4 | BMP、WAV、双时钟FIFO、音频帧FIFO |
 | `Lean` | 6 | 文件源、控制、错误装载、完整四旋转视频、音频、播放整合 |
-| `All` | 22 | 上述全部用例 |
+| `All` | 23 | 上述全部用例 |
 
 `lean_video`对四次完整640×480 BMP进行4×307200逐像素黄金比较，并使用真实native SDRAM控制器与独立器件模型。`lean_image_loader`专查坏尺寸/签名、取消、终态/写入退休及重用。`lean_audio`检查分块WAV读取、循环、左右声道、音量/静音和ACR。`lean_player_core`检查四文件切换、并发音频、坏图跳过和拔卡重插。
 
 完整视频和整合用例在本机耗时较长。**不要同时启动同一个case**：每项使用固定工作库和原始日志目录；各批次归档才区分运行。源码改变后，旧进程结果只适用于其展开时的版本。
+
+`native_sdram_ctrl`是短命令测试，检查读写数据与tag、跨行访问、停钟后的接口封锁、复位恢复，以及异步复位释放DQ驱动。它使用独立SDRAM器件模型，不能代替物理相位、电气和器件时序验证。
 
 ## 工具、日志和返回值
 

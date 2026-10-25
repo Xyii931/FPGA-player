@@ -48,7 +48,8 @@ module sd_sector_reader #(
     input wire I_sd_miso
 );
     localparam [3:0] POWER_WAIT=0,CLOCK_START=1,CLOCK_WAIT=2,COMMAND_SEND=3,COMMAND_WAIT=4,
-        SCHEDULE=5,READ_SEND=6,READ_WAIT=7,DELIVER=8,COMPLETE=9,RETRY=10,POLL_DELAY=11;
+        SCHEDULE=5,READ_SEND=6,READ_WAIT=7,DELIVER=8,COMPLETE=9,RETRY=10,POLL_DELAY=11,
+        CHECK_REQUEST=12;
     localparam [2:0] INIT_CMD0=0,INIT_CMD8=1,INIT_CMD55=2,INIT_ACMD41=3,INIT_CMD58=4,INIT_CMD16=5,PROBE_CMD13=6,INIT_CMD9=7;
     reg [3:0] S_state,S_complete_error;
     reg [2:0] S_step;
@@ -271,14 +272,19 @@ module sd_sector_reader #(
                 SCHEDULE: begin
                     if(S_pick_found) begin
                         S_active<=S_pick; S_round_robin<=S_pick+2'd1;
-                        if(S_canceled[S_pick]) begin S_complete_error<=6; S_state<=COMPLETE; end
-                        else if(!O_card_ready) begin S_complete_error<=11; S_state<=COMPLETE; end
-                        else if(S_entry_error[S_pick]!=0) begin S_complete_error<=S_entry_error[S_pick]; S_state<=COMPLETE; end
-                        else begin S_write_count<=0; S_block_good<=0; S_state<=READ_SEND; end
+                        // End arbitration at a register. Validation must not put
+                        // the round-robin/priority mux in the completion path.
+                        S_state<=CHECK_REQUEST;
                     end else if(!O_card_ready) begin S_timer<=0; S_state<=RETRY; end
                     else if(S_probe_age>=PROBE_CYCLES-1 && !(I_request_valid && O_request_ready)) begin
                         S_probe_age<=0; S_step<=PROBE_CMD13; S_state<=COMMAND_SEND;
                     end
+                end
+                CHECK_REQUEST: begin
+                    if(S_canceled[S_active] || S_cancel_active) complete_active(4'd6);
+                    else if(!O_card_ready) complete_active(4'd11);
+                    else if(S_entry_error[S_active]!=0) complete_active(S_entry_error[S_active]);
+                    else begin S_write_count<=0; S_block_good<=0; S_state<=READ_SEND; end
                 end
                 READ_SEND: if(S_canceled[S_active] || S_cancel_active) complete_active(4'd6);
                     else if(S_phy_cmd_ready) S_state<=READ_WAIT;

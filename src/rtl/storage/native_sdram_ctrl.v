@@ -82,7 +82,9 @@ module native_sdram_ctrl #(
     assign O_device_busy=O_initialized && (S_state!=RUN || !S_pipes_empty ||
         {O_sdram_ras_n,O_sdram_cas_n,O_sdram_we_n}!=3'b111);
     assign O_sdram_clk=I_clk_sft;
-    assign IO_sdram_dq=S_dq_drive && !I_reset ? S_dq_data : 32'bz;
+    // S_dq_drive already clears asynchronously with I_reset. A second reset
+    // mux here would add a host-reset-to-device-data half-cycle path.
+    assign IO_sdram_dq=S_dq_drive ? S_dq_data : 32'bz;
 
     // READ data appears after the CAS edge. Capture at the FOLLOWING device edge,
     // before its next data change, then transfer on the next related logic edge.

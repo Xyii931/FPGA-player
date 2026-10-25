@@ -1,4 +1,4 @@
-# Run through run_synthesis.ps1; no place/route, bit generation or programming.
+# Run through run_synthesis.ps1; optional place/route, never bit generation/programming.
 set repo_root [file normalize [file join [file dirname [info script]] .. ..]]
 set project_name $::env(FPGA_PLAYER_PROJECT)
 if {$project_name ni {p0_hdmi lean_player}} {puts stderr "Invalid project"; exit 1}
@@ -80,6 +80,29 @@ if {[catch {
     report_timing_status -file ${run_name}_gate.ts
     report_timing_summary -file ${run_name}_gate.timing
     puts "PLAYER_TD_SYNTH_PASS $run_name"
+    if {[info exists ::env(FPGA_PLAYER_PLACE_ROUTE)] && $::env(FPGA_PLAYER_PLACE_ROUTE) eq "1"} {
+        if {$module_name ne ""} {error "Place/route requires a board top"}
+        puts "PLAYER_TD_STAGE place"
+        set step place
+        load_run_param -run phy_1
+        commit_param -step place
+        place
+        update_timing -mode manhattan
+        report_timing_summary -file ${run_name}_place.timing
+        export_db ${run_name}_place.db
+        puts "PLAYER_TD_STAGE route"
+        set step route
+        commit_param -step route
+        route
+        update_timing -mode final
+        report_area -io_info -file ${run_name}_phy.area
+        report_timing_status -file ${run_name}_phy.ts
+        report_timing_summary -file ${run_name}_pr.timing
+        report_timing_exception -file ${run_name}_exception.timing
+        report_clock_utilization -file ${run_name}_clock_utilization.rpt
+        export_db ${run_name}_pr.db
+        puts "PLAYER_TD_ROUTE_PASS $run_name"
+    }
 } detail]} {
     puts stderr "PLAYER_TD_SYNTH_FAIL $run_name step=$step: $detail"
     exit 1

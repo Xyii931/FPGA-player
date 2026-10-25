@@ -60,7 +60,8 @@ module fat32_file_reader #(
     input wire [7:0] I_buffer_data
 );
     localparam [3:0] SCHEDULE=0,PREPARE=1,WALK_START=2,WALK_WAIT=3,
-        DATA_SEND=4,DATA_WAIT=5,DATA_ADDRESS=6,DATA_LATCH=7,DATA_OUT=8,COMPLETE=9;
+        DATA_SEND=4,DATA_WAIT=5,DATA_ADDRESS=6,DATA_LATCH=7,DATA_OUT=8,COMPLETE=9,
+        ADDRESS_SUM=10,ADDRESS_CHECK=11;
     reg [3:0] S_state;
     reg [7:0] S_complete_error;
     reg [CONTEXTS-1:0] S_open,S_pending,S_terminal,S_canceled,S_lost;
@@ -80,7 +81,7 @@ module fat32_file_reader #(
     wire S_cancel_active=S_cancel_accept && I_cancel_context==S_active && I_cancel_epoch==S_epoch[S_active];
     wire S_stop=S_canceled[S_active] || S_cancel_active;
     wire S_lost_active=S_lost[S_active] || !I_mounted;
-    wire [31:0] S_target_index=S_cursor[S_active]>>(5'd9+{2'd0,I_cluster_shift});
+    reg [31:0] S_target_index;
     reg [31:0] S_walk_first,S_walk_target,S_walk_base_index;
     wire S_walk_owner=S_state==WALK_START || S_state==WALK_WAIT;
     wire S_walk_ready,S_walk_result_valid,S_walk_eoc;
@@ -90,9 +91,7 @@ module fat32_file_reader #(
     wire S_walk_read_valid,S_walk_read_abort,S_walk_read_result_ready;
     wire [8:0] S_walk_address;
     wire [31:0] S_sector_in_cluster=(S_cursor[S_active]>>9)&((32'd1<<I_cluster_shift)-32'd1);
-    wire [63:0] S_data_address={32'd0,I_data_lba}+
-        (({32'd0,S_checkpoint[S_active]}-64'd2)<<I_cluster_shift)+{32'd0,S_sector_in_cluster};
-    wire [63:0] S_volume_data_end={32'd0,I_data_lba}+({32'd0,I_cluster_count}<<I_cluster_shift);
+    reg [63:0] S_cluster_offset,S_data_address,S_volume_data_end;
     wire [63:0] S_file_capacity={32'd0,I_cluster_count}<<(5'd9+{2'd0,I_cluster_shift});
     wire S_load_bad=I_load_context>=CONTEXTS || I_cluster_count==0 || I_cluster_count>32'h0fffffee ||
         {32'd0,I_file_size}>S_file_capacity ||
@@ -162,6 +161,7 @@ module fat32_file_reader #(
             S_complete_error<=0;
             S_active<=0; S_rr<=0; S_cancel_pending<=0; S_cancel_context<=0; S_cancel_epoch<=0;
             S_walk_first<=0; S_walk_target<=0; S_walk_base_index<=0;
+            S_target_index<=0; S_cluster_offset<=0; S_data_address<=0; S_volume_data_end<=0;
             O_load_result_valid<=0; O_load_context<=0; O_load_error<=0; O_byte_data<=0;
             O_done_valid<=0; O_done_context<=0; O_done_epoch<=0; O_done_bytes<=0; O_done_eof<=0;
             O_done_error<=0; O_done_storage_error<=0; O_cancel_done_valid<=0;
@@ -233,6 +233,23 @@ module fat32_file_reader #(
                     else if(S_stop) complete(8'd8);
                     else if(S_error[S_active]!=0) complete(S_error[S_active]);
                     else if(S_remaining[S_active]==0) complete(8'd0);
+                    else begin
+                        // Keep context selection, address arithmetic and bounds
+                        // comparison on separate clocks. These registers are
+                        // refreshed at every sector/checkpoint boundary.
+                        S_target_index<=S_cursor[S_active]>>(5'd9+{2'd0,I_cluster_shift});
+                        S_cluster_offset<=({32'd0,S_checkpoint[S_active]}-64'd2)<<I_cluster_shift;
+                        S_state<=ADDRESS_SUM;
+                    end
+                end
+                ADDRESS_SUM: begin
+                    S_data_address<={32'd0,I_data_lba}+S_cluster_offset+{32'd0,S_sector_in_cluster};
+                    S_volume_data_end<={32'd0,I_data_lba}+({32'd0,I_cluster_count}<<I_cluster_shift);
+                    S_state<=ADDRESS_CHECK;
+                end
+                ADDRESS_CHECK: begin
+                    if(S_lost_active) complete(8'd1);
+                    else if(S_stop) complete(8'd8);
                     else if(S_target_index>=I_cluster_count) complete(8'd9);
                     else if(S_target_index==S_checkpoint_index[S_active]) begin
                         if(S_data_address>=S_volume_data_end || S_data_address>64'hffffffff) complete(8'd9);

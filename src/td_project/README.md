@@ -16,6 +16,15 @@
 & ./src/td_project/run_synthesis.ps1 -Project p0_hdmi
 ```
 
+需要继续布局布线时，显式使用 `-PlaceAndRoute`：
+
+```powershell
+& ./src/td_project/run_synthesis.ps1 -Project p0_hdmi -PlaceAndRoute
+& ./src/td_project/run_synthesis.ps1 -Project lean_player -PlaceAndRoute
+```
+
+此选项从当前源码重新综合，继续布局、布线并输出最终时序报告；不能与 `-Module` 同用。它不生成bit，也不下载。结果的 `Stage=Routed` 时，`Passed`还要求最终setup/hold非负；缺少时序报告或时序未通过均返回失败退出码。约束覆盖和电气检查仍须单独完成。
+
 默认项目为 `lean_player`。可选模块检查仅保留实际依赖：
 
 ```powershell
@@ -25,7 +34,7 @@
 
 默认TD路径为 `D:/Anlogic/TD_6.2.1_Engineer_6.2.168.116/bin/td_commands_prompt.exe`，可用 `-TdPath` 覆盖。中文路径通过临时空闲盘符映射处理，不复制工程；脚本只释放自己建立的映射。
 
-日志保存在 `.local/td-build/<项目>/<批次>/`，模块另有模块名子目录。`summary.json`记录错误、严重警告、容量和setup/hold WNS。**`Passed=true`只表示综合流程、容量及严重诊断检查通过，时序另看 `TimingMet`。** 现有脚本不布局布线、不生成bit、不下载或烧Flash。
+日志保存在 `.local/td-build/<项目>/<批次>/`，模块另有模块名子目录。`summary.json`记录阶段、错误、严重警告、容量和setup/hold WNS。默认 `Stage=Synthesis` 时，**`Passed=true`只表示综合流程、容量及严重诊断检查通过，时序另看 `TimingMet`。** 使用 `-PlaceAndRoute` 后改查最终布线的 `*_phy.ts`、`*_pr.timing`、`*_phy.area`和时序例外报告。脚本不生成bit、不下载或烧Flash。
 
 ## 时钟与原语
 

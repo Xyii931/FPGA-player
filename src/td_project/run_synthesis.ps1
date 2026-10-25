@@ -4,10 +4,12 @@ param(
     [string]$Project = 'lean_player',
     [ValidateSet('lean_media_source', 'audio_frame_fifo')]
     [string]$Module,
+    [switch]$PlaceAndRoute,
     [string]$TdPath = 'D:/Anlogic/TD_6.2.1_Engineer_6.2.168.116/bin/td_commands_prompt.exe'
 )
 $ErrorActionPreference = 'Stop'
 if ($Module -and $Project -ne 'lean_player') { throw '-Module requires -Project lean_player.' }
+if ($Module -and $PlaceAndRoute) { throw '-PlaceAndRoute requires a board top, not -Module.' }
 if (-not (Test-Path -LiteralPath $TdPath -PathType Leaf)) {
     throw "TD command-line executable not found: $TdPath. Set -TdPath."
 }
@@ -21,6 +23,7 @@ $substDrive = $null
 $simRepoDir = $repoDir
 $previousProject = $env:FPGA_PLAYER_PROJECT
 $previousModule = $env:FPGA_PLAYER_MODULE
+$previousPlaceRoute = $env:FPGA_PLAYER_PLACE_ROUTE
 $exitCode = -1
 $errorText = $null
 $started = Get-Date
@@ -45,6 +48,7 @@ try {
     }
     $env:FPGA_PLAYER_PROJECT = $Project
     $env:FPGA_PLAYER_MODULE = $Module
+    $env:FPGA_PLAYER_PLACE_ROUTE = if ($PlaceAndRoute) { '1' } else { '0' }
     $scriptPath = (Join-Path $simRepoDir 'src/td_project/synthesize.tcl').Replace('\', '/')
     Write-Host "Synthesizing $runName ..."
     $process = Start-Process -FilePath $TdPath -WorkingDirectory (Join-Path $simRepoDir $relativeDir) `
@@ -57,13 +61,15 @@ try {
 } finally {
     $env:FPGA_PLAYER_PROJECT = $previousProject
     $env:FPGA_PLAYER_MODULE = $previousModule
+    $env:FPGA_PLAYER_PLACE_ROUTE = $previousPlaceRoute
     if ($substDrive) { & subst.exe $substDrive /D }
 }
 $consoleLog = Join-Path $resultDir 'console.log'
 $criticalWarnings = 0
 $errors = 0
 $resources = @()
-$areaReport = Join-Path $resultDir "${runName}_gate.area"
+$reportStage = if ($PlaceAndRoute) { 'phy' } else { 'gate' }
+$areaReport = Join-Path $resultDir "${runName}_${reportStage}.area"
 if (Test-Path -LiteralPath $areaReport) {
     foreach ($line in Get-Content -LiteralPath $areaReport) {
         if ($line -match '^\s*#(?<Name>[A-Za-z0-9_]+)\s+(?<Used>\d+)\s+out of\s+(?<Available>\d+)') {
@@ -89,10 +95,13 @@ $passed = $exitCode -eq 0 -and (Test-Path -LiteralPath $consoleLog) -and
     (Select-String -LiteralPath $consoleLog -SimpleMatch "PLAYER_TD_SYNTH_PASS $runName" -Quiet) -and
     $resourceFits -and
     $criticalWarnings -eq 0 -and $errors -eq 0
+if ($PlaceAndRoute) {
+    $passed = $passed -and (Select-String -LiteralPath $consoleLog -SimpleMatch "PLAYER_TD_ROUTE_PASS $runName" -Quiet)
+}
 $setupWns = $null
 $holdWns = $null
 $timingMet = $null
-$timingStatus = Join-Path $resultDir "${runName}_gate.ts"
+$timingStatus = Join-Path $resultDir "${runName}_${reportStage}.ts"
 if (Test-Path -LiteralPath $timingStatus) {
     $timingText = Get-Content -LiteralPath $timingStatus -Raw
     if ($timingText -match 'SWNS:\s*(-?\d+(?:\.\d+)?)ns') {
@@ -105,9 +114,11 @@ if (Test-Path -LiteralPath $timingStatus) {
         $timingMet = $setupWns -ge 0 -and $holdWns -ge 0
     }
 }
+if ($PlaceAndRoute) { $passed = $passed -and $timingMet -eq $true }
 $result = [pscustomobject]@{
     Project = $Project
     Module = $Module
+    Stage = if ($PlaceAndRoute) { 'Routed' } else { 'Synthesis' }
     Passed = [bool]$passed
     ExitCode = $exitCode
     CriticalWarnings = $criticalWarnings
@@ -125,6 +136,6 @@ $result = [pscustomobject]@{
 $result | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $resultDir 'summary.json') -Encoding UTF8
 $result | Format-List
 Write-Host "Results: $resultDir"
-if ($timingMet -eq $false) { Write-Host 'Timing target not met; inspect gate.ts and gate.timing.' }
+if ($timingMet -eq $false) { Write-Host "Timing target not met; inspect ${reportStage}.ts and timing reports." }
 if (-not $passed) { exit 1 }
 exit 0
