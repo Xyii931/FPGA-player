@@ -574,7 +574,7 @@ module tb_image_load_reservation;
     reg S_top_down=0;
     reg [1:0] S_rotation=0;
     reg S_mem_held=0;
-    reg [152:0] S_mem_saved;
+    reg [153:0] S_mem_saved;
     assign S_I_mem_done_valid=S_endpoint_valid && !S_response_hold;
     assign S_I_mem_ready=S_allow_memory &&
         (!S_endpoint_valid || (S_O_mem_done_ready && !S_response_hold)) && S_cycle%5!=0;

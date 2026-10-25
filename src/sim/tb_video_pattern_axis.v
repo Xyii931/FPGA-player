@@ -1,10 +1,13 @@
 `timescale 1ns/1ps
 module tb_video_pattern_axis;
-    wire [2:0] S_done;
+    wire [5:0] S_done;
     reg S_test_pass = 1'b0;
     video_pattern_axis_case #(8, 4) u_small(S_done[0]);
     video_pattern_axis_case #(640, 480) u_full(S_done[1]);
     video_pattern_axis_case #(1, 1) u_single(S_done[2]);
+    video_pattern_axis_case #(2, 2) u_two(S_done[3]);
+    video_pattern_axis_case #(3, 2) u_odd(S_done[4]);
+    video_pattern_axis_case #(257, 2) u_gray_boundary(S_done[5]);
     initial begin
         wait (&S_done);
         S_test_pass = 1'b1;

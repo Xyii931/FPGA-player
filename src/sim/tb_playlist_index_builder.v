@@ -1,6 +1,7 @@
 `timescale 1ns/1ps
 // Real parser + index store. Source byte and retirement endpoints are test stimulus only.
 module tb_playlist_index_builder;
+    wire [6:0] S_policy_u_dut_O_read_policy;
     reg S_clk=0;
     reg S_reset=1;
     reg S_media_valid=1;
@@ -165,7 +166,6 @@ playlist_index_builder u_dut (
         .O_reorder_revision(S_runtime_u_dut_O_reorder_revision),
         .O_reorder_current_index(S_runtime_u_dut_O_reorder_current_index)
     );
-    wire [6:0] S_policy_u_dut_O_read_policy;
     always #4 S_clk=~S_clk;
     reg [7:0] S_bytes[0:32767];
     reg [511:0] S_files[0:63],S_audios[0:63];

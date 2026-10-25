@@ -275,6 +275,16 @@ module tb_player_control;
             @(negedge S_video_clk); S_c_I_video_done_valid=0;
         end
     endtask
+    task accept_video_command;
+        begin
+            // valid can rise just after a posedge. Drive ready at a negedge and
+            // prove a real sampling edge before withdrawing it or cancelling.
+            @(negedge S_video_clk); S_c_I_video_start_ready=1;
+            @(posedge S_video_clk);
+            if(!S_c_O_video_start_valid) fail("mailbox command did not handshake");
+            @(negedge S_video_clk); S_c_I_video_start_ready=0;
+        end
+    endtask
     initial begin
         #101; S_reset=0;
         S_c_I_dwell_seconds=1;
@@ -282,7 +292,7 @@ module tb_player_control;
         send_command(1,0);
         wait(S_c_O_video_start_valid); video_cycles(8);
         if(S_c_O_video_command!==S_frozen || S_c_O_done_valid) fail("unstable payload or enqueue treated as apply");
-        S_c_I_video_start_ready=1; video_cycles(1); S_c_I_video_start_ready=0;
+        accept_video_command;
         backend_result(1,0); consume_result;
         if(S_c_O_result[127:96]!=1 || !S_c_O_result[75] || S_c_O_result[71]) fail("actual result identity lost");
         // Host cancellation can arrive before the stopped video domain captures request.
@@ -300,7 +310,7 @@ module tb_player_control;
         send_command(3,1); wait(S_c_O_video_start_valid);
         if(S_c_O_video_command[82:81]!=2 || S_c_O_video_command[63:32]!=32'haaaa)
             fail("fresh track did not use real serial / preserved mixer state");
-        S_c_I_video_start_ready=1; video_cycles(1); S_c_I_video_start_ready=0;
+        accept_video_command;
         @(negedge S_host_clk); S_c_I_abort=1;
         wait(S_c_O_video_abort); video_cycles(8);
         if(S_c_O_done_valid) fail("accepted transaction canceled without real retirement");
@@ -309,7 +319,7 @@ module tb_player_control;
         @(negedge S_video_clk); S_t_I_start_valid=1;
         while(!S_t_O_start_ready) @(negedge S_video_clk);
         video_cycles(1); S_t_I_start_valid=0;
-        wait(S_t_O_video_valid); S_t_I_video_ready=1;
+        wait(S_t_O_video_valid); @(negedge S_video_clk); S_t_I_video_ready=1;
         S_t_I_video_done_epoch=S_t_O_video_epoch; S_t_I_video_done_tag=S_t_O_video_tag;
         S_t_I_video_done_frame_index=S_t_O_video_frame_index;
         video_cycles(1); S_t_I_video_ready=0;

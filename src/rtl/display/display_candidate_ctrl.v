@@ -75,7 +75,10 @@ module display_candidate_ctrl (
     reg S_cancelled,S_revoked_seen;
     reg C_range_ok,C_targets_free,C_full_match;
     reg [1:0] C_bank_match;
-    integer C_i,C_index;
+    integer C_i;
+    // Exactly four source/bank entries. Do not widen dynamic bank selection
+    // to an integer: that creates large variable shifts for the context buses.
+    reg [1:0] C_index;
     function [20:0] slot_base;
         input [2:0] slot;
         begin case(slot)

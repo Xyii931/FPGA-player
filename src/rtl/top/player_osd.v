@@ -16,6 +16,7 @@ module player_osd (
     input wire [22:0] I_view,
     input wire [2879:0] I_titles,
     input wire [53:0] I_title_lengths,
+    input wire [31:0] I_title_serial,
     input wire I_alert,
     input wire [5:0] I_alert_length,
     input wire [319:0] I_alert_text,
@@ -98,15 +99,25 @@ module player_osd (
     wire S_font_reset;
     wire S_idle;
     wire [3469:0] S_snapshot;
+    wire [589:0] S_small_snapshot;
+    wire S_title_read;
+    wire [3:0] S_title_line;
+    wire [5:0] S_title_address;
+    wire [7:0] S_title_data;
+    wire S_snapshot_valid,S_snapshot_done;
     reset_sync u_reset(.I_clk(I_font_clk),.I_async_reset(I_async_reset),.O_reset(S_font_reset));
-    video_ui_cdc #(.WIDTH(3470)) u_state(
-        .I_host_clk(I_host_clk),.I_video_clk(I_font_clk),.I_async_reset(I_async_reset),.I_frame_start(S_idle),
-        .I_state({I_alert,I_alert_length,I_alert_text,I_view,I_titles,I_title_lengths,I_mem_grant,I_mem_busy,I_index,I_count,I_audio_und,I_video_und,I_fps,I_mem_valid,I_fps_valid,I_hud,I_ui}),
-        .O_state(S_snapshot)
+    osd_title_snapshot u_snapshot (
+        .I_host_clk(I_host_clk),.I_font_clk(I_font_clk),.I_async_reset(I_async_reset),.I_boundary(S_idle),
+        .I_release(S_snapshot_done),.O_state_valid(S_snapshot_valid),
+        .I_state({I_alert,I_alert_length,I_alert_text,I_view,I_title_lengths,I_mem_grant,I_mem_busy,I_index,I_count,I_audio_und,I_video_und,I_fps,I_mem_valid,I_fps_valid,I_hud,I_ui}),
+        .I_titles(I_titles),.I_serial(I_title_serial),.O_state(S_small_snapshot),
+        .I_title_read(S_title_read),.I_title_line(S_title_line),.I_title_address(S_title_address),.O_title_data(S_title_data)
     );
+    assign S_snapshot={S_small_snapshot[589:240],2880'd0,S_small_snapshot[239:0]};
     assign {S_state_alert,S_state_alert_length,S_state_alert_text,S_state_view,S_state_titles,S_state_title_lengths,S_state_mem_grant,S_state_mem_busy,S_state_index,S_state_count,S_state_audio_und,S_state_video_und,
         S_state_fps,S_state_mem_valid,S_state_fps_valid,S_state_hud,S_state_ui}=S_snapshot;
-    osd_menu_builder u_builder (
+    osd_menu_builder #(.EXTERNAL_SNAPSHOT(1),.EXTERNAL_TITLES(1)) u_builder (
+        .I_snapshot_valid(S_snapshot_valid),.O_snapshot_done(S_snapshot_done),
         .O_begin_valid(S_begin_valid),
         .O_line_valid(S_line_valid),
         .O_layer(S_layer),
@@ -143,6 +154,7 @@ module player_osd (
         .I_view(S_state_view),
         .I_titles(S_state_titles),
         .I_title_lengths(S_state_title_lengths),
+        .O_title_read(S_title_read),.O_title_line(S_title_line),.O_title_address(S_title_address),.I_title_data(S_title_data),
         .I_alert(S_state_alert),
         .I_alert_length(S_state_alert_length),
         .I_alert_text(S_state_alert_text),

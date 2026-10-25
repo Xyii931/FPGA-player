@@ -64,6 +64,7 @@ module player_top (
     wire [22:0] S_player_view;
     wire [2879:0] S_titles;
     wire [53:0] S_title_lengths;
+    wire [31:0] S_title_serial;
     wire [23:0] S_rgb,S_color_rgb,S_overlay_rgb,S_audio_left,S_audio_right;
     wire [19:0] S_acr_n,S_acr_cts;
     wire S_hdmi_locked,S_bridge_fault,S_sink_reset;
@@ -194,6 +195,8 @@ module player_top (
     );
     assign S_menu_info={S_ui_error!=0 ? S_ui_error : S_order_error,S_menu_key,S_menu_confirm,S_menu_edit,S_menu_root,S_menu_group,2'd0};
     video_ui_cdc #(.WIDTH(311)) u_ui_cdc (
+        .I_release(1'b0),.O_state_valid(),
+        .I_capture_valid(1'b0),.I_publish_valid(1'b0),.I_discard_valid(1'b0),
         .I_host_clk(S_clk125),.I_video_clk(S_clk25),.I_async_reset(S_common_reset),.I_frame_start(S_frame_start),
         .I_state({S_player_view,S_config,S_menu_value,S_menu_info,
             S_recovery_active,S_demo_active,S_alert_visible,(!S_active && !S_alert_visible),S_player_busy,(S_player_fault || S_session_error!=0 || S_memory_clock_fault || S_memory_contract_fault),
@@ -223,7 +226,7 @@ module player_top (
         .I_index(S_current_index),
         .I_mem_busy(S_mem_busy_cycles),
         .I_mem_grant(S_mem_grant_cycles),
-        .I_view(S_player_view),.I_titles(S_titles),.I_title_lengths(S_title_lengths),
+        .I_view(S_player_view),.I_titles(S_titles),.I_title_lengths(S_title_lengths),.I_title_serial(S_title_serial),
         .I_alert(S_alert_visible),.I_alert_length(S_alert_length),.I_alert_text(S_alert_text),
         .O_builder_error(S_osd_builder_error),
         .I_video_clk(S_clk25),
@@ -432,6 +435,7 @@ module player_top (
         .O_scan_active_order(S_index_order),
         .O_player_titles(S_titles),
         .O_player_title_lengths(S_title_lengths),
+        .O_player_title_serial(S_title_serial),
         .O_player_all_failed(S_all_failed),
         .O_player_watchdog_expired(S_watchdog_expired),
         .O_resident_ready(S_resident_ready),

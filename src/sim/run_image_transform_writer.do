@@ -8,6 +8,7 @@ cd $build_dir
 transcript file image_transform_writer.log
 vlib work
 vmap work [file join $build_dir work]
+source [file join $script_dir load_player_bram.do]
 vlog -work work [file join $script_dir .. rtl media image_geometry.v]
 vlog -work work [file join $script_dir .. rtl media image_scaler.v]
 vlog -work work [file join $script_dir .. rtl media image_rotate.v]
@@ -15,7 +16,7 @@ vlog -work work [file join $script_dir .. rtl media image_transform.v]
 vlog -work work [file join $script_dir .. rtl display fb_writer.v]
 vlog -work work [file join $script_dir .. rtl display fb_slot_manager.v]
 vlog -work work [file join $script_dir tb_image_transform_writer.v]
-vsim -voptargs=+acc work.tb_image_transform_writer
+vsim -voptargs=+acc work.tb_image_transform_writer {*}$bram_extra_tops
 onfinish stop
 run -all
 if {[examine -radix binary /tb_image_transform_writer/S_test_pass] ne "1"} {

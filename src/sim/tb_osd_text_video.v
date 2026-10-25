@@ -128,6 +128,20 @@ module tb_osd_text_video;
             wait(S_line_ready);
         end
     endtask
+    task check_frame;
+        begin
+            // Observe a counted frame edge, rather than a combinational pulse
+            // that may already be high before the counter consumes it.
+            S_before=S_frames; wait(S_frames>S_before);
+            @(negedge S_video_clk); S_checked=0; S_check=1; S_before=S_frames;
+            wait(S_frames>S_before); @(negedge S_video_clk); S_check=0;
+            if(S_checked!=640*480 || S_missing_rows!=0 || S_glyph_misses!=0) begin
+                $display("coverage pixels=%0d missing_rows=%0d glyph_misses=%0d line_misses=%0d",
+                    S_checked,S_missing_rows,S_glyph_misses,S_line_misses);
+                fail("full-frame coverage");
+            end
+        end
+    endtask
     initial begin
         repeat(5) @(negedge S_host_clk); S_reset=0;
         wait(S_begin_ready); @(negedge S_host_clk); S_begin=1; @(negedge S_host_clk); S_begin=0;
@@ -135,16 +149,13 @@ module tb_osd_text_video;
         S_source[0]="A"; add_line(1,2,1);
         wait(S_finish_ready); @(negedge S_host_clk); S_finish=1; @(negedge S_host_clk); S_finish=0;
         wait(S_done); if(S_error!=0 || !S_active || S_cache_misses!=1) fail("actual text publication");
-        wait(S_frame); @(negedge S_video_clk); S_check=1; S_before=S_frames;
-        wait(S_frames>S_before); @(negedge S_video_clk); S_check=0;
-        if(S_checked!=640*480 || S_missing_rows!=0 || S_glyph_misses!=0) fail("full-frame coverage");
+        check_frame;
         // Stopped producer leaves video running and reports missed rows, then recovers.
         wait(S_de && S_x==0 && S_y==100); @(negedge S_host_clk); S_run_host=0;
         S_before=S_line_misses; repeat(4000) @(negedge S_video_clk);
         if(S_line_misses<=S_before) fail("stopped producer deadline detection");
         S_run_host=1;
-        wait(S_frame); @(negedge S_video_clk); S_check=1; S_before=S_frames;
-        wait(S_frames>S_before); @(negedge S_video_clk); S_check=0;
+        check_frame;
         S_test_pass=1; $display("PASS: actual text/glyph/renderer/dual-clock line RAM and full-frame pixels"); $finish;
     end
     initial begin #150000000; fail("video OSD watchdog"); end

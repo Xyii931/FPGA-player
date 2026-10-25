@@ -8,6 +8,7 @@ cd $build_dir
 transcript file bmp_frame_loader.log
 vlib work
 vmap work [file join $build_dir work]
+source [file join $script_dir load_player_bram.do]
 foreach source {bmp_parser.v rle_parser.v image_file_decoder.v bmp_file_source.v image_geometry.v image_scaler.v image_rotate.v image_transform.v layout_geometry.v bmp_frame_load_ctrl.v bmp_frame_loader.v} {
     vlog -work work [file join $script_dir .. rtl media $source]
 }
@@ -15,7 +16,7 @@ foreach source {fb_writer.v fb_slot_manager.v} {
     vlog -work work [file join $script_dir .. rtl display $source]
 }
 vlog -work work [file join $script_dir tb_bmp_frame_loader.v]
-vsim -voptargs=+acc work.tb_bmp_frame_loader
+vsim -voptargs=+acc work.tb_bmp_frame_loader {*}$bram_extra_tops
 onfinish stop
 run -all
 if {[examine -radix binary /tb_bmp_frame_loader/S_test_pass] ne "1"} {

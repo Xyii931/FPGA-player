@@ -24,35 +24,57 @@ module fb_slot_arbiter (
     reg [114:0] S_command;
     reg [96:0] S_result;
     reg S_rejected;
-    reg C_found,C_promises;
+    reg C_found;
+    reg [2:0] C_eligible;
+    reg [2:0] C_grant,C_rejected;
+    reg [17:0] C_mutations;
     reg [1:0] C_choice;
     reg [114:0] C_command,C_candidate;
-    integer C_i,C_index;
+    integer C_i;
     wire [2:0] S_op=S_command[114:112],S_slot=S_command[111:109];
     wire S_mutates=S_op==0 || S_op==4;
     wire S_match=I_result[92:90]==S_op && I_result[89:87]==S_slot &&
         I_result[86:85]==S_command[108:107] && I_result[52:21]==S_command[74:43] &&
         ((S_op==0 && I_result[96:93]==0) ? I_result[84:53]!=0 : I_result[84:53]==S_command[106:75]);
     always @* begin
-        C_found=0; C_choice=0; C_command=0; C_candidate=0; C_promises=0; C_index=0;
+        // Check fixed client slices first; rotate only the three eligibility bits.
+        // A dynamic integer offset here expands three wide command multiplexers.
+        C_found=0; C_choice=0; C_command=0; C_candidate=0; C_eligible=0;
+        C_grant=0; C_rejected=0; C_mutations=0;
         for(C_i=0;C_i<3;C_i=C_i+1) begin
-            C_index=S_next+C_i; if(C_index>=3) C_index=C_index-3;
-            C_candidate=I_client_command[C_index*115+:115];
-            C_promises=(C_candidate[114:112]!=1 || (C_candidate[3] && C_candidate[2])) &&
+            C_candidate=I_client_command[C_i*115+:115];
+            C_eligible[C_i]=I_client_valid[C_i] &&
+                (C_candidate[114:112]!=1 || (C_candidate[3] && C_candidate[2])) &&
                 (C_candidate[114:112]!=2 || C_candidate[108:107]>=2 || C_candidate[0]) &&
                 (C_candidate[114:112]!=3 || C_candidate[1]);
-            if(!C_found && I_client_valid[C_index] && C_promises) begin
-                C_found=1; C_choice=C_index; C_command=C_candidate;
+            if((C_candidate[114:112]==0 || C_candidate[114:112]==4) && C_candidate[111:109]<6) begin
+                C_rejected[C_i]=I_pinned_slots[C_candidate[111:109]];
+                C_mutations[C_i*6+:6]=6'b000001<<C_candidate[111:109];
             end
         end
+        C_found=|C_eligible;
+        case(S_next)
+            0:if(C_eligible[0]) C_choice=0;
+                else if(C_eligible[1]) C_choice=1; else C_choice=2;
+            1:if(C_eligible[1]) C_choice=1;
+                else if(C_eligible[2]) C_choice=2; else C_choice=0;
+            default:if(C_eligible[2]) C_choice=2;
+                else if(C_eligible[0]) C_choice=0; else C_choice=1;
+        endcase
+        case(C_choice)
+            0:C_command=I_client_command[114:0];
+            1:C_command=I_client_command[229:115];
+            default:C_command=I_client_command[344:230];
+        endcase
+        if(C_found) C_grant=3'b001<<C_choice;
         O_client_ready=0;
-        if(!I_reset && S_state==IDLE && !O_contract_fault && C_found) O_client_ready[C_choice]=1;
+        if(!I_reset && S_state==IDLE && !O_contract_fault) O_client_ready=C_grant;
         O_mutating_slots=0;
         // Include admission on this edge, not only the registered request.
         if(S_state!=IDLE && !S_rejected && S_mutates && S_slot<6) O_mutating_slots[S_slot]=1;
-        if((|O_client_ready) && (C_command[114:112]==0 || C_command[114:112]==4) && C_command[111:109]<6 &&
-            !I_pinned_slots[C_command[111:109]])
-            O_mutating_slots[C_command[111:109]]=1;
+        for(C_i=0;C_i<3;C_i=C_i+1)
+            if(O_client_ready[C_i] && !C_rejected[C_i])
+                O_mutating_slots=O_mutating_slots | C_mutations[C_i*6+:6];
     end
     assign O_cmd_valid=!I_reset && S_state==SEND;
     assign O_cmd=S_command;
@@ -69,8 +91,7 @@ module fb_slot_arbiter (
             case(S_state)
                 IDLE:if(|O_client_ready) begin
                     S_client<=C_choice; S_command<=C_command; S_rejected<=0;
-                    if((C_command[114:112]==0 || C_command[114:112]==4) && C_command[111:109]<6 &&
-                        I_pinned_slots[C_command[111:109]]) begin
+                    if(|(C_grant & C_rejected)) begin
                         S_rejected<=1;
                         S_result<={4'd2,C_command[114:107],C_command[106:75],C_command[74:43],21'd0};
                         S_state<=RESULT;

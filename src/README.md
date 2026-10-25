@@ -1,13 +1,13 @@
 # 正式工程源码
 
-本目录保存播放器源码、硬件工程、约束、测试和素材工具。主要入口是 [player_top.v](rtl/top/player_top.v)，对应 TD工程 [player.al](td_project/player.al)。功能已编写并连接，全部 HDL 尚待编译、仿真和硬件验证。
+本目录保存播放器源码、硬件工程、约束、测试和素材工具。主要入口是 [player_top.v](rtl/top/player_top.v)，对应 TD工程 [player.al](td_project/player.al)。功能已编写并连接；2026-10-25已通过P0六项基础仿真、Storage十六项（含修复后复测）及部分Media定向测试和基础视频工程综合。完整播放器已发现严重资源超预算，综合检查未通过，布局布线及硬件验证尚未执行，见 [TD综合检查](../docs/record/2026-10-25-P0-TD综合检查.md)。
 
 ## 目录职责
 
 | 目录 | 内容 | 使用场景 |
 |---|---|---|
 | [rtl/](rtl/README.md) | 通用逻辑、存储、媒体、显示和顶层模块 | 阅读及修改播放器功能 |
-| `ip/` | 两个 PLL 包装和集成 SDRAM 原语包装 | 综合时加载真实器件原语 |
+| `ip/` | 两个 PLL、集成 SDRAM 及显式32K块RAM包装 | 综合时加载真实器件原语 |
 | `constraints/` | 播放器与基础视频工程各自的 ADC/SDC | TD 引脚分配及起始时序约束 |
 | [td_project/](td_project/README.md) | `player.al`、`p0_hdmi.al` | TD 综合、实现和生成下载文件 |
 | [sim/](sim/README.md) | 自检测试台、设备模型、ModelSim脚本和批量入口 | 在硬件验证前定位模块与集成问题 |

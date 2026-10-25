@@ -320,6 +320,18 @@ module tb_bmp_frame_loader;
         begin $display("FAIL: case %0d: %0s",S_case,message); $stop; end
     endtask
     initial begin #1000000000; fail("watchdog timeout"); end
+    // Keep long full-frame runs observable, including the owner waiting on I/O.
+    initial begin
+        forever begin
+            #1000000;
+            $display("PROGRESS: t=%0t case=%0d ctrl=%0d writes=%0d replies=%0d byte=%0d file=%b transform=%b writer=%b",
+                $time,S_case,u_dut.u_ctrl.S_state,S_writes,S_replies,S_I_fs_byte_offset,
+                u_dut.u_ctrl.S_file_seen,u_dut.u_ctrl.S_transform_seen,u_dut.u_ctrl.S_writer_seen);
+            $display("PROGRESS: source=%0d decoder=%0d parser=%0d parse_error=%0d transform=%0d writer=%0d pixels=%0d",
+                u_dut.u_file.S_state,u_dut.u_file.u_parser.S_state,u_dut.u_file.u_parser.u_bmp.S_state,
+                u_dut.u_file.O_parser_error,u_dut.u_transform.S_state,u_dut.u_writer.S_state,S_O_pixels);
+        end
+    end
     wire [17:0] S_states;
     fb_slot_manager u_slots (
         .I_clk(S_I_clk),
@@ -375,7 +387,7 @@ module tb_bmp_frame_loader;
     reg S_top_down=0;
     reg [1:0] S_rotation=0;
     reg S_mem_held=0;
-    reg [152:0] S_mem_saved;
+    reg [153:0] S_mem_saved;
     assign S_I_mem_done_valid=S_endpoint_valid && !S_response_hold;
     assign S_I_mem_ready=S_allow_memory &&
         (!S_endpoint_valid || (S_O_mem_done_ready && !S_response_hold)) && S_cycle%5!=0;
@@ -627,6 +639,8 @@ module tb_bmp_frame_loader;
             // Root command snapshot is independent of current upstream values.
             S_I_tag=2; S_I_generation=99; S_I_rect_width=600; S_I_rotation=3; S_I_clear_rgba=0;
             for(k=0;k<700;k=k+1) byte_in(k);
+            if(u_dut.u_file.O_error!=0 || u_dut.u_file.O_parser_error!=0)
+                fail("unexpected source/parser failure before file retirement");
             wait(u_dut.u_ctrl.S_transform_seen); assert_loading;
             if(u_dut.u_ctrl.S_file_seen) fail("file done inferred from final pixel/byte");
             S_I_fs_close_ready=0; read_done(700,0); wait(S_O_fs_close_valid); assert_loading;

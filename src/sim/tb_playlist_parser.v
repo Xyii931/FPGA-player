@@ -1,6 +1,8 @@
 `timescale 1ns/1ps
 // Handwritten byte fixtures and expected records, not an executable RTL surrogate.
 module tb_playlist_parser;
+    // Shared endpoint declarations precede all instance/assign uses.
+    wire [6:0] S_policy_u_dut_O_policy;
     reg S_clk=0,S_reset=0,S_start=0,S_byte_valid=0,S_last=0,S_abort=0,S_stream_error=0;
     reg [31:0] S_size=0,S_generation=0;
     reg [15:0] S_tag=0;
@@ -33,7 +35,6 @@ playlist_parser u_dut (
         .O_policy(S_policy_u_dut_O_policy),
         .O_order_explicit(S_runtime_u_dut_O_order_explicit)
     );
-    wire [6:0] S_policy_u_dut_O_policy;
     always #4 S_clk=~S_clk;
     reg [7:0] S_bytes[0:32767];
     reg [511:0] S_files[0:63],S_audios[0:63];

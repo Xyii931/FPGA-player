@@ -330,6 +330,14 @@
                     <Attr Name="CompileOrder" Val="40" />
                 </FileInfo>
             </File>
+            <File Path="../rtl/display/osd_title_snapshot.v">
+                <FileInfo>
+                    <Attr Name="CompileOrder" Val="149" />
+                    <Attr Name="UsedInSyn" Val="true" />
+                    <Attr Name="UsedInP&amp;R" Val="true" />
+                    <Attr Name="BelongTo" Val="design_1" />
+                </FileInfo>
+            </File>
             <File Path="../rtl/display/osd_menu_builder.v">
                 <FileInfo>
                     <Attr Name="UsedInSyn" Val="true" />
@@ -1192,6 +1200,14 @@
                     <Attr Name="UsedInP&amp;R" Val="true" />
                     <Attr Name="BelongTo" Val="design_1" />
                     <Attr Name="CompileOrder" Val="148" />
+                </FileInfo>
+            </File>
+            <File Path="../ip/player_bram32k.v">
+                <FileInfo>
+                    <Attr Name="UsedInSyn" Val="true" />
+                    <Attr Name="UsedInP&amp;R" Val="true" />
+                    <Attr Name="BelongTo" Val="design_1" />
+                    <Attr Name="CompileOrder" Val="150" />
                 </FileInfo>
             </File>
         </Verilog>

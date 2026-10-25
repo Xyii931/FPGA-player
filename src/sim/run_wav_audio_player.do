@@ -8,11 +8,12 @@ cd $build_dir
 transcript file wav_audio_player.log
 vlib work
 vmap work [file join $build_dir work]
+source [file join $script_dir load_player_bram.do]
 foreach source {common/reset_sync.v common/async_fifo.v media/audio_frame_fifo.v media/wav_parser.v media/apt_parser.v media/audio_file_decoder.v media/wav_track_source.v media/audio_track_guard.v media/audio_mix.v media/audio_playback.v media/audio_slot_recycle.v media/wav_audio_slot.v media/wav_audio_player.v} {
     vlog -work work [file join $script_dir .. rtl $source]
 }
 vlog -work work [file join $script_dir tb_wav_audio_player.v]
-vsim -voptargs=+acc work.tb_wav_audio_player
+vsim -voptargs=+acc work.tb_wav_audio_player {*}$bram_extra_tops
 onfinish stop
 run -all
 if {[examine -radix binary /tb_wav_audio_player/S_test_pass] ne "1"} {

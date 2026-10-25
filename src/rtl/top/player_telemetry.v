@@ -26,6 +26,8 @@ module player_telemetry #(
     end
     // Same stable-payload protocol, with source=video and destination=host.
     video_ui_cdc #(.WIDTH(96)) u_snapshot (
+        .I_capture_valid(1'b0),.I_publish_valid(1'b0),.I_discard_valid(1'b0),
+        .I_release(1'b0),.O_state_valid(),
         .I_host_clk(I_video_clk),.I_video_clk(I_host_clk),.I_async_reset(I_async_reset),.I_frame_start(1'b1),
         .I_state({S_frames,I_video_und_count,S_audio_und}),.O_state(S_snapshot)
     );

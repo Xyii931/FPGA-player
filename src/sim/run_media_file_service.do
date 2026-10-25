@@ -9,6 +9,7 @@ cd $build_dir
 transcript file media_file_service.log
 vlib work
 vmap work [file join $build_dir work]
+source [file join $script_dir load_player_bram.do]
 foreach folder {common storage media display} {
     foreach source [lsort [glob -directory [file join $script_dir .. rtl $folder] *.v]] {
         vlog -work work $source
@@ -17,9 +18,9 @@ foreach folder {common storage media display} {
 vlog -work work [file join $script_dir .. rtl top media_io.v]
 vlog -work work [file join $script_dir tb_media_file_service.v]
 # Verify the full real TF/scan/BMP/two-WAV hierarchy resolves. No pin simulation here.
-vsim -voptargs=+acc work.media_io
+vsim -voptargs=+acc work.media_io {*}$bram_extra_tops
 quit -sim
-vsim -voptargs=+acc work.tb_media_file_service
+vsim -voptargs=+acc work.tb_media_file_service {*}$bram_extra_tops
 onfinish stop
 run -all
 if {[examine -radix binary /tb_media_file_service/S_test_pass] ne "1"} {

@@ -2,17 +2,80 @@
 // Actual recovery catalog and FAT32 core. Raw SD sectors are an explicit endpoint.
 // No physical SPI/SD/fragment recovery, SDRAM, image decoder or hardware evidence.
 module tb_raw_recovery;
+    // Declare the complete endpoint before instances (Verilog-2001).
     reg S_clk=0,S_reset=1,S_enable=1,S_card=1,S_test_pass=0;
-    always #4 S_clk=~S_clk;
     reg S_core_I_clk=0;
     reg S_core_I_reset=0;
     reg S_core_I_card_ready=0;
     reg S_core_I_unmount=0;
     reg [32:0] S_core_I_capacity_sectors=0;
     reg S_core_I_mount_valid=0;
+    reg S_core_I_mount_result_ready=0;
+    reg S_core_I_enum_valid=0;
+    reg [15:0] S_core_I_enum_tag=0;
+    reg [6:0] S_core_I_enum_path_length=0;
+    reg [31:0] S_core_I_enum_sector_budget=0;
+    reg S_core_I_enum_path_valid=0;
+    reg [7:0] S_core_I_enum_path_data=0;
+    reg S_core_I_enum_path_last=0;
+    reg S_core_I_enum_stop=0;
+    reg S_core_I_enum_cancel=0;
+    reg S_core_I_enum_entry_ready=0;
+    reg S_core_I_enum_name_ready=0;
+    reg S_core_I_enum_done_ready=0;
+    reg S_core_I_open_valid=0;
+    reg [1:0] S_core_I_open_context=0;
+    reg [15:0] S_core_I_open_tag=0;
+    reg [6:0] S_core_I_path_length=0;
+    reg [31:0] S_core_I_sector_budget=0;
+    reg S_core_I_path_valid=0;
+    reg [7:0] S_core_I_path_data=0;
+    reg S_core_I_path_last=0;
+    reg S_core_I_open_cancel=0;
+    reg S_core_I_open_result_ready=0;
+    reg S_core_I_close_valid=0;
+    reg [1:0] S_core_I_close_context=0;
+    reg S_core_I_read_valid=0;
+    reg [1:0] S_core_I_read_context=0;
+    reg [1:0] S_core_I_read_priority=0;
+    reg [31:0] S_core_I_offset=0;
+    reg [31:0] S_core_I_length=0;
+    reg [15:0] S_core_I_epoch=0;
+    reg [2:0] S_core_I_urgent_context=0;
+    reg S_core_I_byte_ready=0;
+    reg S_core_I_done_ready=0;
+    reg S_core_I_cancel_valid=0;
+    reg [1:0] S_core_I_cancel_context=0;
+    reg [15:0] S_core_I_cancel_epoch=0;
+    reg S_core_I_cancel_done_ready=0;
+    reg S_core_I_sd_request_ready=0;
+    reg S_core_I_sd_byte_valid=0;
+    reg [7:0] S_core_I_sd_byte_data=0;
+    reg S_core_I_sd_sector_last=0;
+    reg S_core_I_sd_request_last=0;
+    reg [1:0] S_core_I_sd_byte_context=0;
+    reg [15:0] S_core_I_sd_byte_tag=0;
+    reg S_core_I_sd_done_valid=0;
+    reg [1:0] S_core_I_sd_done_context=0;
+    reg [15:0] S_core_I_sd_done_tag=0;
+    reg [3:0] S_core_I_sd_done_error=0;
+    reg S_core_I_sd_cancel_ready=0;
+    reg S_core_I_sd_cancel_done_valid=0;
+    reg [1:0] S_core_I_sd_cancel_done_context=0;
+    reg [15:0] S_core_I_sd_cancel_done_tag=0;
+    reg [7:0] S_disk[0:8191];
+    reg S_raw_active=0,S_raw_done=0;
+    reg [1:0] S_raw_pause=0;
+    reg S_inline_terminal=0;
+    reg [31:0] S_raw_sector=0;
+    reg [8:0] S_raw_byte=0;
+    reg [15:0] S_raw_tag=0;
+    reg [7:0] S_received[0:1023];
+    reg [511:0] S_expected_record;
+    integer S_i,S_read_count=0,S_requests=0,S_terminal_delay=0;
+    reg S_initial_scan=1;
     wire S_core_O_mount_ready;
     wire S_core_O_mount_result_valid;
-    reg S_core_I_mount_result_ready=0;
     wire [7:0] S_core_O_mount_error;
     wire [3:0] S_core_O_mount_storage_error;
     wire [31:0] S_core_O_mount_generation;
@@ -27,19 +90,9 @@ module tb_raw_recovery;
     wire [31:0] S_core_O_root_cluster;
     wire [7:0] S_core_O_sectors_per_cluster;
     wire [2:0] S_core_O_cluster_shift;
-    reg S_core_I_enum_valid=0;
     wire S_core_O_enum_ready;
-    reg [15:0] S_core_I_enum_tag=0;
-    reg [6:0] S_core_I_enum_path_length=0;
-    reg [31:0] S_core_I_enum_sector_budget=0;
-    reg S_core_I_enum_path_valid=0;
     wire S_core_O_enum_path_ready;
-    reg [7:0] S_core_I_enum_path_data=0;
-    reg S_core_I_enum_path_last=0;
-    reg S_core_I_enum_stop=0;
-    reg S_core_I_enum_cancel=0;
     wire S_core_O_enum_entry_valid;
-    reg S_core_I_enum_entry_ready=0;
     wire [7:0] S_core_O_enum_attr;
     wire [31:0] S_core_O_enum_size;
     wire [31:0] S_core_O_enum_first_cluster;
@@ -47,30 +100,18 @@ module tb_raw_recovery;
     wire [6:0] S_core_O_enum_name_length;
     wire S_core_O_enum_is_lfn;
     wire S_core_O_enum_name_valid;
-    reg S_core_I_enum_name_ready=0;
     wire [7:0] S_core_O_enum_name_data;
     wire S_core_O_enum_name_last;
     wire S_core_O_enum_done_valid;
-    reg S_core_I_enum_done_ready=0;
     wire [15:0] S_core_O_enum_tag;
     wire [31:0] S_core_O_enum_generation;
     wire [31:0] S_core_O_enum_sectors;
     wire [2:0] S_core_O_enum_warning;
     wire [7:0] S_core_O_enum_error;
     wire [3:0] S_core_O_enum_storage_error;
-    reg S_core_I_open_valid=0;
     wire S_core_O_open_ready;
-    reg [1:0] S_core_I_open_context=0;
-    reg [15:0] S_core_I_open_tag=0;
-    reg [6:0] S_core_I_path_length=0;
-    reg [31:0] S_core_I_sector_budget=0;
-    reg S_core_I_path_valid=0;
     wire S_core_O_path_ready;
-    reg [7:0] S_core_I_path_data=0;
-    reg S_core_I_path_last=0;
-    reg S_core_I_open_cancel=0;
     wire S_core_O_open_result_valid;
-    reg S_core_I_open_result_ready=0;
     wire [1:0] S_core_O_open_context;
     wire [15:0] S_core_O_open_tag;
     wire [31:0] S_core_O_open_generation;
@@ -84,67 +125,68 @@ module tb_raw_recovery;
     wire [31:0] S_core_O_byte_generation;
     wire [31:0] S_core_O_done_generation;
     wire [31:0] S_core_O_cancel_done_generation;
-    reg S_core_I_close_valid=0;
     wire S_core_O_close_ready;
-    reg [1:0] S_core_I_close_context=0;
-    reg S_core_I_read_valid=0;
     wire S_core_O_read_ready;
-    reg [1:0] S_core_I_read_context=0;
-    reg [1:0] S_core_I_read_priority=0;
-    reg [31:0] S_core_I_offset=0;
-    reg [31:0] S_core_I_length=0;
-    reg [15:0] S_core_I_epoch=0;
-    reg [2:0] S_core_I_urgent_context=0;
     wire S_core_O_byte_valid;
-    reg S_core_I_byte_ready=0;
     wire [7:0] S_core_O_byte_data;
     wire [1:0] S_core_O_byte_context;
     wire [15:0] S_core_O_byte_epoch;
     wire [31:0] S_core_O_byte_offset;
     wire S_core_O_byte_last;
     wire S_core_O_done_valid;
-    reg S_core_I_done_ready=0;
     wire [1:0] S_core_O_done_context;
     wire [15:0] S_core_O_done_epoch;
     wire [31:0] S_core_O_done_bytes;
     wire S_core_O_done_eof;
     wire [7:0] S_core_O_done_error;
     wire [3:0] S_core_O_done_storage_error;
-    reg S_core_I_cancel_valid=0;
     wire S_core_O_cancel_ready;
-    reg [1:0] S_core_I_cancel_context=0;
-    reg [15:0] S_core_I_cancel_epoch=0;
     wire S_core_O_cancel_done_valid;
-    reg S_core_I_cancel_done_ready=0;
     wire [1:0] S_core_O_cancel_done_context;
     wire [15:0] S_core_O_cancel_done_epoch;
     wire S_core_O_sd_request_valid;
-    reg S_core_I_sd_request_ready=0;
     wire [31:0] S_core_O_sd_lba;
     wire [7:0] S_core_O_sd_count;
     wire [1:0] S_core_O_sd_context;
     wire [1:0] S_core_O_sd_priority;
     wire [15:0] S_core_O_sd_tag;
-    reg S_core_I_sd_byte_valid=0;
     wire S_core_O_sd_byte_ready;
-    reg [7:0] S_core_I_sd_byte_data=0;
-    reg S_core_I_sd_sector_last=0;
-    reg S_core_I_sd_request_last=0;
-    reg [1:0] S_core_I_sd_byte_context=0;
-    reg [15:0] S_core_I_sd_byte_tag=0;
-    reg S_core_I_sd_done_valid=0;
     wire S_core_O_sd_done_ready;
-    reg [1:0] S_core_I_sd_done_context=0;
-    reg [15:0] S_core_I_sd_done_tag=0;
-    reg [3:0] S_core_I_sd_done_error=0;
     wire S_core_O_sd_cancel_valid;
-    reg S_core_I_sd_cancel_ready=0;
     wire [1:0] S_core_O_sd_cancel_context;
     wire [15:0] S_core_O_sd_cancel_tag;
-    reg S_core_I_sd_cancel_done_valid=0;
     wire S_core_O_sd_cancel_done_ready;
-    reg [1:0] S_core_I_sd_cancel_done_context=0;
-    reg [15:0] S_core_I_sd_cancel_done_tag=0;
+    wire S_demo_O_raw_request_valid;
+    wire [31:0] S_demo_O_raw_lba;
+    wire [15:0] S_demo_O_raw_tag;
+    wire S_demo_O_raw_byte_ready;
+    wire S_demo_O_raw_done_ready;
+    wire S_demo_O_ready;
+    wire [3:0] S_demo_O_error;
+    wire S_demo_O_flash_valid;
+    wire [23:0] S_demo_O_flash_address;
+    wire [9:0] S_demo_O_flash_length;
+    wire S_demo_O_flash_byte_ready;
+    wire S_demo_O_flash_done_ready;
+    wire S_demo_O_request_ready;
+    wire S_demo_O_byte_valid;
+    wire [7:0] S_demo_O_byte_data;
+    wire S_demo_O_sector_last;
+    wire S_demo_O_request_last;
+    wire [1:0] S_demo_O_byte_context;
+    wire [1:0] S_demo_O_done_context;
+    wire [1:0] S_demo_O_cancel_done_context;
+    wire [15:0] S_demo_O_byte_tag;
+    wire [15:0] S_demo_O_done_tag;
+    wire [15:0] S_demo_O_cancel_done_tag;
+    wire S_demo_O_done_valid;
+    wire [3:0] S_demo_O_done_error;
+    wire S_demo_O_cancel_ready;
+    wire S_demo_O_cancel_done_valid;
+    wire S_demo_O_quiescent;
+    wire S_raw_emit=S_raw_active && S_raw_pause==0;
+    wire S_inline_done=S_inline_terminal && S_raw_emit && S_raw_byte==511;
+    always #4 S_clk=~S_clk;
     fat32_core u_core (
         .I_clk(S_clk),
         .I_reset(S_reset),
@@ -288,34 +330,6 @@ module tb_raw_recovery;
         .I_sd_cancel_done_context(S_demo_O_cancel_done_context),
         .I_sd_cancel_done_tag(S_demo_O_cancel_done_tag)
     );
-    wire S_demo_O_raw_request_valid;
-    wire [31:0] S_demo_O_raw_lba;
-    wire [15:0] S_demo_O_raw_tag;
-    wire S_demo_O_raw_byte_ready;
-    wire S_demo_O_raw_done_ready;
-    wire S_demo_O_ready;
-    wire [3:0] S_demo_O_error;
-    wire S_demo_O_flash_valid;
-    wire [23:0] S_demo_O_flash_address;
-    wire [9:0] S_demo_O_flash_length;
-    wire S_demo_O_flash_byte_ready;
-    wire S_demo_O_flash_done_ready;
-    wire S_demo_O_request_ready;
-    wire S_demo_O_byte_valid;
-    wire [7:0] S_demo_O_byte_data;
-    wire S_demo_O_sector_last;
-    wire S_demo_O_request_last;
-    wire [1:0] S_demo_O_byte_context;
-    wire [1:0] S_demo_O_done_context;
-    wire [1:0] S_demo_O_cancel_done_context;
-    wire [15:0] S_demo_O_byte_tag;
-    wire [15:0] S_demo_O_done_tag;
-    wire [15:0] S_demo_O_cancel_done_tag;
-    wire S_demo_O_done_valid;
-    wire [3:0] S_demo_O_done_error;
-    wire S_demo_O_cancel_ready;
-    wire S_demo_O_cancel_done_valid;
-    wire S_demo_O_quiescent;
     demo_sector_source #(.RECOVERY(1),.RECOVERY_SECTORS(16)) u_demo (
         .I_clk(S_clk),
         .I_reset(S_reset),
@@ -325,13 +339,13 @@ module tb_raw_recovery;
         .I_raw_request_ready(!S_raw_active && !S_raw_done),
         .O_raw_lba(S_demo_O_raw_lba),
         .O_raw_tag(S_demo_O_raw_tag),
-        .I_raw_byte_valid(S_raw_active),
+        .I_raw_byte_valid(S_raw_emit),
         .O_raw_byte_ready(S_demo_O_raw_byte_ready),
         .I_raw_byte_data(S_disk[{S_raw_sector[3:0],S_raw_byte}]),
         .I_raw_sector_last(S_raw_byte==9'd511),
         .I_raw_request_last(S_raw_byte==9'd511),
         .I_raw_byte_tag(S_raw_tag),
-        .I_raw_done_valid(S_raw_done && S_terminal_delay==0),
+        .I_raw_done_valid((S_raw_done && S_terminal_delay==0) || S_inline_done),
         .O_raw_done_ready(S_demo_O_raw_done_ready),
         .I_raw_done_error(S_raw_sector==5 ? 4'd2 : 4'd0),
         .I_raw_done_tag(S_raw_tag),
@@ -376,29 +390,27 @@ module tb_raw_recovery;
         .I_cancel_done_ready(S_core_O_sd_cancel_done_ready),
         .O_quiescent(S_demo_O_quiescent)
     );
-    reg [7:0] S_disk[0:8191];
-    reg S_raw_active=0,S_raw_done=0;
-    reg [31:0] S_raw_sector=0;
-    reg [8:0] S_raw_byte=0;
-    reg [15:0] S_raw_tag=0;
-    reg [7:0] S_received[0:1023];
-    integer S_i,S_read_count=0,S_requests=0,S_terminal_delay=0;
-    reg S_initial_scan=1;
     task fail;
         input [767:0] text;
         begin $display("FAIL raw_recovery: %0s",text); $stop; end
     endtask
-    // Hold each byte until actual acceptance, then delay the real terminal.
+    // Insert gaps between accepted bytes. Terminals are delayed initially and
+    // coincide with the accepted last byte during the final rescan.
     always @(posedge S_clk) begin
-        if(S_reset) begin S_raw_active<=0; S_raw_done<=0; S_terminal_delay<=0; end
+        if(S_reset) begin S_raw_active<=0; S_raw_done<=0; S_terminal_delay<=0; S_raw_pause<=0; end
         else begin
+            if(S_raw_pause!=0) S_raw_pause<=S_raw_pause-1'b1;
             if(S_demo_O_raw_request_valid && !S_raw_active && !S_raw_done) begin
                 if(S_demo_O_raw_lba>=16) fail("raw read exceeded configured scan/file bound");
                 S_raw_sector<=S_demo_O_raw_lba; S_raw_tag<=S_demo_O_raw_tag;
-                S_raw_byte<=0; S_raw_active<=1; S_requests=S_requests+1;
+                S_raw_byte<=0; S_raw_active<=1; S_raw_pause<=0; S_requests=S_requests+1;
             end
-            if(S_raw_active && S_demo_O_raw_byte_ready) begin
-                if(S_raw_byte==511) begin S_raw_active<=0; S_raw_done<=1; S_terminal_delay<=9; end
+            if(S_raw_emit && S_demo_O_raw_byte_ready) begin
+                S_raw_pause<=S_raw_byte[1:0]==2 ? 2'd2 : 2'd0;
+                if(S_raw_byte==511) begin
+                    S_raw_active<=0;
+                    if(!S_inline_terminal) begin S_raw_done<=1; S_terminal_delay<=9; end
+                end
                 else S_raw_byte<=S_raw_byte+1'b1;
             end
             if(S_terminal_delay!=0) S_terminal_delay<=S_terminal_delay-1;
@@ -457,13 +469,18 @@ module tb_raw_recovery;
     endtask
     task read_file;
         input integer length;
+        integer stall_cycle;
         begin
             S_read_count=0;
             @(negedge S_clk); S_core_I_read_context=0; S_core_I_offset=0; S_core_I_length=length;
             S_core_I_epoch=S_core_I_epoch+1; S_core_I_read_valid=1;
             while(!S_core_O_read_ready) @(negedge S_clk);
             @(negedge S_clk); S_core_I_read_valid=0; S_core_I_byte_ready=1;
-            wait(S_core_O_done_valid);
+            stall_cycle=0;
+            while(!S_core_O_done_valid) begin
+                @(negedge S_clk); stall_cycle=stall_cycle+1;
+                S_core_I_byte_ready=stall_cycle%5!=0 && stall_cycle%7!=0;
+            end
             if(S_core_O_done_error!=0 || S_core_O_done_bytes!=length || S_read_count!=length || !S_core_O_done_eof)
                 fail("recovered file byte/EOF completion");
             @(negedge S_clk); S_core_I_done_ready=1; S_core_I_byte_ready=0;
@@ -487,10 +504,20 @@ module tb_raw_recovery;
         mount(); open_file("/PLAY/PLAYLIST.TXT",18,128); read_file(128);
         if({S_received[18],S_received[19],S_received[20]}!=="BMP" ||
             {S_received[77],S_received[78],S_received[79],S_received[80]}!=="D001") fail("recovery playlist excludes failed candidate");
+        S_expected_record={"[ITEM]",8'd10,"file=/D000.BMP",8'd10,{41{8'd32}},8'd10};
+        for(S_i=0;S_i<64;S_i=S_i+1)
+            if(S_received[S_i]!==S_expected_record[(63-S_i)*8+:8]) fail("first recovery record golden bytes");
+        S_expected_record={"[ITEM]",8'd10,"file=/D001.BMP",8'd10,{41{8'd32}},8'd10};
+        for(S_i=0;S_i<64;S_i=S_i+1)
+            if(S_received[64+S_i]!==S_expected_record[(63-S_i)*8+:8]) fail("second recovery record golden bytes");
         open_file("/D000.BMP",9,62); read_file(62);
         if({S_received[0],S_received[1]}!=="BM" || S_received[54]!=8'h13) fail("first recovered BMP bytes");
+        for(S_i=0;S_i<62;S_i=S_i+1)
+            if(S_received[S_i]!==S_disk[2*512+S_i]) fail("complete first recovered file bytes");
         open_file("/D001.BMP",9,854); read_file(854);
         if(S_received[600]!=8'hac) fail("continuous second sector did not map to raw disk");
+        for(S_i=0;S_i<854;S_i=S_i+1)
+            if(S_received[S_i]!==S_disk[7*512+S_i]) fail("complete multi-sector recovered bytes under backpressure");
         // Dropped card withdraws ready; real backend must drain before rearming.
         @(negedge S_clk); S_card=0;
         @(negedge S_clk); if(S_demo_O_ready) fail("removed card kept recovered directory online");
@@ -502,7 +529,24 @@ module tb_raw_recovery;
         wait(S_requests>S_i); @(negedge S_clk); S_enable=0;
         wait(S_demo_O_quiescent);
         if(S_raw_active || S_raw_done || S_demo_O_ready) fail("recovery mode exit bypassed backend drain");
-        S_test_pass=1; $display("PASS recovery scan/read failures/virtual FAT/bounds/removal/drain"); $finish;
+        wait(u_demo.S_boot==u_demo.RAW_IDLE);
+        // Rescan a shorter catalog without resetting its retained map RAM. The
+        // old second asset becomes the sole first entry with a new directory.
+        @(negedge S_clk); S_disk[2*512]=0; S_disk[4*512]=0; S_enable=1;
+        wait(u_demo.S_boot==u_demo.LIST_PAIR && u_demo.S_catalog_phase==3);
+        @(negedge S_clk); S_enable=0;
+        wait(S_demo_O_quiescent); wait(u_demo.S_boot==u_demo.RAW_IDLE);
+        if(S_demo_O_ready || !u_demo.S_catalog_idle) fail("recovery exit bypassed metadata read drain");
+        @(negedge S_clk); S_inline_terminal=1; S_enable=1;
+        mount(); open_file("/PLAY/PLAYLIST.TXT",18,64); read_file(64);
+        S_expected_record={"[ITEM]",8'd10,"file=/D000.BMP",8'd10,{41{8'd32}},8'd10};
+        for(S_i=0;S_i<64;S_i=S_i+1)
+            if(S_received[S_i]!==S_expected_record[(63-S_i)*8+:8]) fail("shorter recovery rescan retained stale mapping");
+        open_file("/D000.BMP",9,854); read_file(854);
+        if(S_received[600]!=8'hac) fail("shorter rescan did not remap old second asset");
+        for(S_i=0;S_i<854;S_i=S_i+1)
+            if(S_received[S_i]!==S_disk[7*512+S_i]) fail("inline final-byte terminal changed recovered file");
+        S_test_pass=1; $display("PASS recovery bytes/stalls, FAT, bounds, removal, read drain and inline terminal rescan"); $finish;
     end
     initial begin #30000000; fail("watchdog"); end
 endmodule

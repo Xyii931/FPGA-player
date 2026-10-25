@@ -25,7 +25,6 @@ module sd_spi_card_model (
         input [15:0] previous;
         input [7:0] byte_value;
         reg [15:0] crc;
-        reg [127:0] csd;
         integer bit_index;
         begin
             crc=previous^{byte_value,8'd0};
@@ -40,6 +39,7 @@ module sd_spi_card_model (
         reg [31:0] arg,lba;
         reg [7:0] value;
         reg [15:0] crc;
+        reg [127:0] csd;
         begin
             cmd=S_packet[0]&63; arg={S_packet[1],S_packet[2],S_packet[3],S_packet[4]};
             if(!last[0]) O_protocol_error=1;

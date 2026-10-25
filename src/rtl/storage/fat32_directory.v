@@ -41,6 +41,9 @@ module fat32_directory (
     wire S_stream_done,S_parser_done,S_parser_end_ready;
     wire S_start=I_start_valid && O_start_ready;
     reg S_busy,S_stopped,S_canceled;
+    // Sticky termination belongs to the active scan, never its next start.
+    wire S_stop=I_stop || (S_busy && S_stopped);
+    wire S_cancel=I_cancel || (S_busy && S_canceled);
     assign O_start_ready=!I_reset && !S_busy && S_stream_ready && S_parser_ready;
     assign O_done_valid=!I_reset && S_stream_done && S_parser_done;
     assign O_error=S_stream_error==1 ? 8'd1 : (S_canceled ? 8'd8 :
@@ -49,7 +52,7 @@ module fat32_directory (
         .I_clk(I_clk),.I_reset(I_reset),.I_mounted(I_mounted),.I_fat_lba(I_fat_lba),.I_data_lba(I_data_lba),
         .I_cluster_count(I_cluster_count),.I_cluster_shift(I_cluster_shift),
         .I_start_valid(S_start),.O_start_ready(S_stream_ready),.I_first_cluster(I_first_cluster),.I_sector_budget(I_sector_budget),
-        .I_stop(S_stopped || I_stop || S_parser_done),.I_cancel(S_canceled || I_cancel),
+        .I_stop(S_stop || (S_busy && S_parser_done)),.I_cancel(S_cancel),
         .O_byte_valid(S_byte_valid),.I_byte_ready(S_byte_ready),.O_byte_data(S_byte),
         .O_end_valid(S_stream_done),.I_end_ready(I_done_ready && S_parser_done),.O_error(S_stream_error),
         .O_storage_error(O_storage_error),.O_sectors(O_sectors),
@@ -60,7 +63,7 @@ module fat32_directory (
         .I_clk(I_clk),.I_reset(I_reset),.I_start_valid(S_start),.O_start_ready(S_parser_ready),
         .I_byte_valid(S_byte_valid),.O_byte_ready(S_byte_ready),.I_byte_data(S_byte),
         .I_end_valid(S_stream_done && !S_parser_done),.O_end_ready(S_parser_end_ready),.I_end_error(S_stream_error),
-        .I_cancel(S_stopped || I_stop || S_canceled || I_cancel || (S_stream_done && S_stream_error!=0)),
+        .I_cancel(S_stop || S_cancel || (S_busy && S_stream_done && S_stream_error!=0)),
         .O_entry_valid(O_entry_valid),.I_entry_ready(I_entry_ready),.O_attr(O_attr),.O_size(O_size),.O_first_cluster(O_first_cluster),
         .O_alias(O_alias),.O_name_length(O_name_length),.O_is_lfn(O_is_lfn),
         .O_name_valid(O_name_valid),.I_name_ready(I_name_ready),.O_name_data(O_name_data),.O_name_last(O_name_last),

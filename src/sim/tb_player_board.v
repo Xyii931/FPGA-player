@@ -150,6 +150,8 @@ module tb_player_board;
     reg S_frame_start=0;
     wire [15:0] S_ui_video;
     video_ui_cdc u_ui (
+        .I_release(1'b0),.O_state_valid(),
+        .I_capture_valid(1'b0),.I_publish_valid(1'b0),.I_discard_valid(1'b0),
         .I_host_clk(S_clk),.I_video_clk(S_video_clk),.I_async_reset(S_reset),
         .I_frame_start(S_frame_start),.I_state(S_ui_state),.O_state(S_ui_video)
     );

@@ -424,9 +424,13 @@ module tb_bmp_file_source;
         // Header and pixel stalls both propagate, then last byte and done handshake together.
         S_I_header_ready=0;
         for(k=0;k<54;k=k+1) byte_in(k,0);
+        // Ready for a malformed/stale byte is deliberately high to drain it.
+        // Probe backpressure with the next in-order byte's address instead.
+        S_I_fs_byte_offset=54;
         wait(S_O_header_valid); repeat(5) begin @(negedge S_I_clk); if(!S_O_header_valid || S_O_fs_byte_ready) fail("header stall"); end
         S_I_header_ready=1;
         for(k=54;k<513;k=k+1) byte_in(k,0);
+        S_I_fs_byte_offset=513;
         S_I_pixel_ready=0; wait(S_O_pixel_valid);
         repeat(5) @(negedge S_I_clk); S_I_pixel_ready=1;
         for(k=513;k<699;k=k+1) byte_in(k,0);

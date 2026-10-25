@@ -35,11 +35,14 @@ module tb_player_console;
     reg [1:0] S_effective_order=0;
     reg S_effective_order_valid=0;
     wire S_restore_ready,S_save_valid,S_save_done_ready;
+    reg S_restore_valid=0;
+    reg [239:0] S_restore_config=0;
     wire S_alert,S_recovery;
     wire [5:0] S_alert_length;
     wire [319:0] S_alert_text;
     reg S_save_ready=1,S_save_done=0;
     reg [3:0] S_save_error=0;
+    wire [2:0] S_policy_u_ui_O_default_override;
     player_ui_ctrl u_ui (
         .I_clk(S_clk),.I_reset(S_reset),.I_key_release(S_keys),.I_switch(S_switch),.I_switch_changed(S_switch_changed),
         .I_switch_initialized(1'b1),.I_active(1'b1),.I_player_busy(S_busy || S_force_busy),.I_fault(1'b0),
@@ -54,8 +57,8 @@ module tb_player_console;
         .O_default_override(S_policy_u_ui_O_default_override),
         .I_effective_order(S_effective_order),
         .I_effective_order_valid(S_effective_order_valid),
-        .I_settings_initialized(1'b1),.I_restore_valid(1'b0),.I_restore_found(1'b0),
-        .O_restore_ready(S_restore_ready),.I_restore_config(240'd0),.I_restore_override(4'd0),
+        .I_settings_initialized(1'b1),.I_restore_valid(S_restore_valid),.I_restore_found(1'b1),
+        .O_restore_ready(S_restore_ready),.I_restore_config(S_restore_config),.I_restore_override(4'd0),
         .O_save_valid(S_save_valid),.I_save_ready(S_save_ready),.I_save_done_valid(S_save_done),
         .O_save_done_ready(S_save_done_ready),.I_save_error(S_save_error),
         .O_order_override(S_runtime_u_ui_O_order_override),
@@ -66,7 +69,6 @@ module tb_player_console;
         .O_alert_text(S_alert_text),
         .O_recovery(S_recovery)
     );
-    wire [2:0] S_policy_u_ui_O_default_override;
     player_console #(.LOG_CYCLES(1000000)) u_console (
         .I_clk(S_clk),.I_reset(S_reset),.I_rx_valid(S_rx_valid),.I_rx_frame_error(S_rx_error),.I_rx_data(S_rx_data),
         .O_tx_valid(S_tx_valid),.I_tx_ready(S_tx_ready),.O_tx_data(S_tx_data),.O_request_valid(S_request_valid),
@@ -133,9 +135,85 @@ module tb_player_console;
             repeat(12) @(negedge S_clk);
         end
     endtask
-    integer S_before,S_j;
+    // Independent byte-stream grammar oracle for the UI's fixed-lane validator.
+    // Nondeclared upper bytes must not affect acceptance of right-aligned text.
+    function alert_reference;
+        input [319:0] text;
+        input [5:0] length;
+        integer position;
+        reg pending,valid;
+        reg [7:0] byte_value;
+        begin
+            pending=0; valid=length>=1 && length<=40;
+            for(position=0;position<length && position<40;position=position+1) begin
+                byte_value=(text >> ((length-position-1)*8));
+                if(pending) begin
+                    valid=valid && byte_value>=8'ha1 && byte_value<=8'hfe;
+                    pending=0;
+                end else if(byte_value>=8'ha1 && byte_value<=8'hfe) pending=1;
+                else valid=valid && byte_value>=8'h20 && byte_value<=8'h7e;
+            end
+            alert_reference=valid && !pending;
+        end
+    endfunction
+    integer S_before,S_j,S_length,S_byte,S_position,S_setting_key,S_setting_value,S_signed_value;
+    reg [319:0] S_validation_text;
+    reg S_validation_done=0;
+    initial begin
+        // Exercise every byte value at the start, middle and end of every
+        // legal length, plus all GB2312 lead/trail combinations and bad lengths.
+        for(S_length=0;S_length<=41;S_length=S_length+1)
+            for(S_byte=0;S_byte<256;S_byte=S_byte+1)
+                for(S_position=0;S_position<3;S_position=S_position+1) begin
+                    S_validation_text={40{8'h41}};
+                    case(S_position)
+                        0:S_validation_text[7:0]=S_byte;
+                        1:S_validation_text[159:152]=S_byte;
+                        2:S_validation_text[319:312]=S_byte;
+                    endcase
+                    if(u_ui.valid_alert_text(S_validation_text,S_length)!==alert_reference(S_validation_text,S_length))
+                        fail("alert validation changed byte grammar or declared length");
+                end
+        for(S_byte=0;S_byte<65536;S_byte=S_byte+1) begin
+            S_validation_text={{38{8'hff}},S_byte[15:0]};
+            if(u_ui.valid_alert_text(S_validation_text,6'd2)!==alert_reference(S_validation_text,6'd2))
+                fail("alert validation changed two-byte grammar or used undeclared bytes");
+        end
+        // Exhaust all signed 16-bit offset inputs against the original signed
+        // arithmetic rule, including extremes that truncate in the narrow path.
+        for(S_setting_value=0;S_setting_value<65536;S_setting_value=S_setting_value+1) begin
+            S_signed_value=S_setting_value>=32768 ? S_setting_value-65536 : S_setting_value;
+            if(u_ui.valid_value(4'd11,S_setting_value)!==
+                (S_signed_value>=-500 && S_signed_value<=500 && S_signed_value%10==0))
+                fail("signed offset range or divisibility changed");
+            // Every configuration admitted by restore/SET must stay valid in
+            // both menu directions; task prevalidation relies on this invariant.
+            for(S_setting_key=0;S_setting_key<15;S_setting_key=S_setting_key+1)
+                if(u_ui.valid_value(S_setting_key,S_setting_value)) begin
+                    if(!u_ui.valid_value(S_setting_key,u_ui.step_value(S_setting_key,S_setting_value,1'b0)) ||
+                       !u_ui.valid_value(S_setting_key,u_ui.step_value(S_setting_key,S_setting_value,1'b1)))
+                        fail("menu stepping escaped validated configuration range");
+                end
+        end
+        S_validation_done=1;
+    end
     initial begin
         repeat(5) @(negedge S_clk); S_reset=0; repeat(30) @(negedge S_clk);
+        // Restore has priority, so an already presented UART request must stay
+        // pending and execute once, after the real restore handshake.
+        fork
+            command("SET interval 20",15);
+            begin
+                wait(S_request_valid); @(negedge S_clk);
+                S_restore_config=S_config; S_restore_config[31:16]=17; S_restore_valid=1;
+                #1; if(S_request_ready || !S_restore_ready) fail("restore/request admission conflict");
+                @(posedge S_clk); #1;
+                if(S_config[31:16]!=17) fail("restore lost priority to a pending UART request");
+                @(negedge S_clk); S_restore_valid=0;
+            end
+        join
+        expect_line("OK\r\n");
+        if(S_config[31:16]!=20) fail("request lost or acknowledged without effect during restore");
         command("pInG",4); expect_line("PONG\r\n");
         command("SET brightness -4",17); expect_line("OK\r\n");
         command("GET BRIGHTNESS",14); expect_line("OK base=-00004 effective=-00004\r\n");
@@ -181,6 +259,15 @@ module tb_player_console;
         if(!S_alert || S_alert_length!=11 || S_alert_text[319:232]!=="Hello World") fail("real alert text state");
         command("ALERT OFF",9); expect_line("OK\r\n");
         if(S_alert) fail("ALERT OFF did not retire timer state");
+        command({"ALERT 2 ",16'ha1a1},10); expect_line("OK\r\n");
+        if(!S_alert || S_alert_length!=2 || S_alert_text[319:304]!==16'ha1a1)
+            fail("valid GB2312 pair did not reach actual alert state");
+        command({"ALERT 2 ",8'ha1},9); expect_line("ERR range\r\n");
+        command({"ALERT 2 ",16'ha120},10); expect_line("ERR range\r\n");
+        command("ALERT 2 1234567890123456789012345678901234567890",48); expect_line("OK\r\n");
+        if(S_alert_length!=40 || S_alert_text!=="1234567890123456789012345678901234567890" || !S_validation_done)
+            fail("maximum alert text or independent grammar sweep");
+        command("ALERT OFF",9); expect_line("OK\r\n");
         command("RECOVER",7); expect_line("OK\r\n");
         if(!S_recovery) fail("RECOVER did not select real recovery source");
         command("MODE PLAY",9); expect_line("OK\r\n");

@@ -2,11 +2,28 @@
 // Actual CDC + planner/map + candidate + arbiter + scanout + reader/RAM.
 // Leases, video authority and host absolute deadlines are explicit fixtures.
 // Memory is a zero-latency tagged logical endpoint, not physical SDRAM.
-module tb_display_video_pipeline;
+module tb_display_video_pipeline #(
+    parameter integer TAIL_ONLY=0
+);
+    // Declare shared endpoint buses before their first instance connection.
+    wire [246:0] S_c_O_pending_config;
+    wire [15:0] S_c_O_pending_tag;
+    wire [31:0] S_c_O_pending_epoch;
+    wire  S_c_O_prepare_valid;
+    wire  S_c_O_prepare_abort;
+    wire  S_c_O_prepare_done_ready;
+    wire  S_c_O_apply_valid;
+    wire  S_c_O_retire_valid;
+    wire [246:0] S_c_O_retire_config;
+    wire [15:0] S_c_O_retire_tag;
+    wire [31:0] S_c_O_retire_epoch;
+    wire  S_c_O_retire_old;
+    wire  S_c_O_retire_done_ready;
     reg S_host_clk=0,S_video_clk=0,S_host_run=1,S_video_run=1,S_reset=0,S_test_pass=0;
     reg [1:0] S_mem_enable=3;
     reg [7:0] S_mem_error=0;
     reg S_allow_apply=1,S_expect_quarantine=0,S_check_pixels=0;
+    reg S_inject_illegal_apply=0;
     integer S_case=0,S_applies=0,S_pixels=0,S_frames=0;
     integer S_effect;
     reg [31:0] S_saved_epoch;
@@ -172,24 +189,11 @@ module tb_display_video_pipeline;
     wire  S_c_O_quarantined;
     wire  S_c_O_host_response_discarded;
     wire  S_c_O_pending_valid;
-    wire [246:0] S_c_O_pending_config;
-    wire [15:0] S_c_O_pending_tag;
-    wire [31:0] S_c_O_pending_epoch;
-    wire  S_c_O_prepare_valid;
-    wire  S_c_O_prepare_abort;
-    wire  S_c_O_prepare_done_ready;
     wire  S_c_O_active_valid;
     wire [246:0] S_c_O_active_config;
     wire [15:0] S_c_O_active_tag;
     wire [31:0] S_c_O_active_epoch;
     wire  S_c_O_applied_pulse;
-    wire  S_c_O_apply_valid;
-    wire  S_c_O_retire_valid;
-    wire [246:0] S_c_O_retire_config;
-    wire [15:0] S_c_O_retire_tag;
-    wire [31:0] S_c_O_retire_epoch;
-    wire  S_c_O_retire_old;
-    wire  S_c_O_retire_done_ready;
     wire  S_c_O_video_quarantined;
     wire  S_c_O_video_response_discarded;
     frame_commit_cdc u_commit (
@@ -319,6 +323,10 @@ module tb_display_video_pipeline;
     endtask
     // Sample before and after NBA: all three ownership changes must be atomic.
     always @(posedge S_video_clk) if(!S_reset && S_c_O_apply_valid) begin
+        if(S_inject_illegal_apply) begin
+            if(u_pipeline.S_apply_fire || u_pipeline.u_scanout_engine.S_install || u_pipeline.S_c_O_adopted)
+                fail("illegal injected apply installed or adopted a candidate");
+        end else begin
         if(!S_p_O_frame_start || !S_p_O_can_apply || !u_pipeline.S_apply_fire ||
             !u_pipeline.u_scanout_engine.S_install || !u_pipeline.S_c_O_adopt_ready)
             fail("apply missing matching install and atomic adopt");
@@ -332,6 +340,7 @@ module tb_display_video_pipeline;
             (u_pipeline.S_s_O_owned_banks & S_seed_mask)!==S_seed_mask)
             fail("partial seed takeover or delayed local configuration");
         S_applies=S_applies+1;
+        end
     end
     always @(negedge S_video_clk) if(!S_reset) begin
         if(!S_expect_quarantine && (S_p_O_contract_fault || S_p_O_quarantined || S_p_O_pixel_fault))
@@ -347,6 +356,7 @@ module tb_display_video_pipeline;
              S_c_O_retire_epoch!==u_pipeline.S_previous_epoch)) fail("wrong old configuration routed");
     end
     initial begin
+        if(!TAIL_ONLY) begin
         // A complete frame for each effect, with actual line prefetch and RAM pixels.
         for(S_effect=0;S_effect<7;S_effect=S_effect+1) begin
             S_case=S_effect; reset_all;
@@ -439,10 +449,15 @@ module tb_display_video_pipeline;
             fail("wrong retire identity did not quarantine unknown resource state");
         if(u_pipeline.S_r_O_bank_reserved==0 || !u_pipeline.S_pending_valid)
             fail("wrong identity cleared uncertain candidate obligation");
+        end
         reset_all;
-        S_case=14; S_expect_quarantine=1;
+        S_case=14; S_expect_quarantine=1; S_inject_illegal_apply=1;
+        // Host admission can recover before the video reset synchronizer.
+        // Inject the fault only after the actual video owner leaves reset.
+        wait(!u_pipeline.S_reset); @(negedge S_video_clk);
         force u_pipeline.I_apply_valid=1'b1;
         @(negedge S_video_clk); release u_pipeline.I_apply_valid;
+        S_inject_illegal_apply=0;
         if(!S_p_O_contract_fault || !S_p_O_quarantined || S_p_O_can_apply)
             fail("illegal apply did not quarantine unknown resource state");
         reset_all;
@@ -463,7 +478,8 @@ module tb_display_video_pipeline;
             fail("first row query mismatch acquired a candidate bank");
         reset_all;
         submit(make_config(0,0,0),16'h9000); result(0,1);
-        $display("PASS: actual CDC/video pipeline atomic install, ownership, pixels and retirement");
+        if(TAIL_ONLY) $display("PASS: video pipeline cases 14-16 and final normal commit; frame cases skipped");
+        else $display("PASS: actual CDC/video pipeline atomic install, ownership, pixels and retirement");
         S_test_pass=1; $finish;
     end
 endmodule

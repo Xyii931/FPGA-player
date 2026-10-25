@@ -8,7 +8,7 @@ transcript file osd_text_video.log
 vlib work
 vmap work [file join $build_dir work]
 vlog -work work [file join $script_dir .. rtl common reset_sync.v]
-foreach source {video_timing ascii_font8x16 gb2312_text_decoder glyph_cache osd_text_store osd_line_renderer osd_line_bridge osd_text_backend osd_text_video osd_menu_builder video_ui_cdc} {
+foreach source {video_timing ascii_font8x16 gb2312_text_decoder glyph_cache osd_text_store osd_line_renderer osd_line_bridge osd_text_backend osd_text_video osd_menu_builder video_ui_cdc osd_title_snapshot} {
     vlog -work work [file join $script_dir .. rtl display $source.v]
 }
 vlog -work work [file join $script_dir .. rtl top player_osd.v]

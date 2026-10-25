@@ -117,7 +117,11 @@ module tb_fat32_path_lookup;
         input integer sectors;
         begin
             wait(S_result); #1;
-            if(S_error!==error || S_sectors!==sectors || S_model_state!=0) fail("error, budget or premature result");
+            if(S_error!==error || S_sectors!==sectors || S_model_state!=0) begin
+                $display("Expected error=%0d sectors=%0d idle=0; got error=%0d sectors=%0d model=%0d",
+                    error,sectors,S_error,S_sectors,S_model_state);
+                fail("error, budget or premature result");
+            end
             if(error==0 && {S_attr,S_cluster,S_size}!=={attr,cluster,size}) fail("entry identity");
             S_held={S_attr,S_size,S_cluster,S_sectors,S_warning,S_error,S_storage_error};
             repeat(9) begin
@@ -158,6 +162,8 @@ module tb_fat32_path_lookup;
         for(S_i=0;S_i<60;S_i=S_i+1) S_long_name[(63-S_i)*8+:8]=8'h61;
         S_long_name[31:0]=".wav";
         long_entry(160,64,S_long_name,"LONG~1  WAV",12,2048);
+        short_entry(352,"ABCDEFGHTXT",32,13,100);
+        short_entry(384,"EIGHTCHR   ",32,14,200);
         short_entry(512,"SUB        ",16,7,0);
         long_entry(544,13,"Theme One.wav","THEME~1 WAV",8,1024);
         short_entry(1024,"TRACK   WAV",32,11,100);
@@ -178,6 +184,8 @@ module tb_fat32_path_lookup;
         send_path("//MuSiC//sUb//track.wav",23,16); finish(0,32,11,100,3);
         send_path("music/",6,16); finish(0,16,5,0,1);
         send_path("empty.wav",9,16); finish(0,32,0,0,1);
+        send_path("abcdefgh.txt",12,16); finish(0,32,13,100,1);
+        send_path("eightchr",8,16); finish(0,32,14,200,1);
         send_path(S_long_name,64,16); finish(0,32,12,2048,1);
         send_path("missing",7,16); finish(14,0,0,0,1);
         send_path("music/missing",13,16); finish(14,0,0,0,2);

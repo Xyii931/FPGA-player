@@ -1,5 +1,5 @@
 `timescale 1ns/1ps
-// Prepared tests only: actual cache, arbiter, CFG1, Flash SPI and byte decoder.
+// Actual cache, arbiter, CFG1, Flash SPI and byte decoder.
 module tb_osd_fonts;
     wire [1:0] S_done;
     reg S_test_pass=0;
@@ -9,7 +9,13 @@ module tb_osd_fonts;
         wait(&S_done); S_test_pass=1;
         $display("PASS: real glyph/Flash/settings route, protection/eviction and GB2312 text"); $finish;
     end
-    initial begin #50000000; $display("FAIL: font test watchdog"); $stop; end
+    initial begin
+        #50000000;
+        $display("FAIL: font test watchdog done=%b cache_state=%0d code=%0d flash_state=%0d text_job=%0d",
+            S_done,u_cache_case.u_cache.S_state,u_cache_case.u_cache.S_code,
+            u_cache_case.u_settings.S_flash_state,u_text_case.S_job);
+        $stop;
+    end
 endmodule
 
 module font_cache_case(output reg O_done=0);
@@ -39,7 +45,12 @@ module font_cache_case(output reg O_done=0);
     reg S_save=0,S_save_done_ready=0,S_busy_stuck=0,S_bad_last=0,S_bad_tag=0;
     wire S_cs,S_sclk,S_mosi,S_miso;
     integer S_i,S_j,S_before;
-    reg [8:0] S_last_slot,S_locked_slot,S_pinned_slot;
+    reg [8:0] S_last_slot,S_locked_slot,S_pinned_slot,S_late_pinned_slot;
+    reg S_background=0;
+    reg [3:0] S_background_row;
+    reg [2:0] S_background_states=0;
+    reg S_background_collision=0;
+    integer S_background_reads=0;
     player_settings #(.FLASH_TIMEOUT_CYCLES(10000)) u_settings (
         .I_host_clk(S_host_clk),.I_flash_clk(S_clk),.I_async_reset(S_reset),
         .O_initialized(S_initialized),.O_restore_valid(S_restore),.I_restore_ready(1'b1),
@@ -51,11 +62,11 @@ module font_cache_case(output reg O_done=0);
         .O_font_read_last(S_font_read_last),.O_font_done_valid(S_font_done),.I_font_done_ready(S_font_done_ready),
         .O_font_error(S_font_error),.O_font_tag(S_font_result_tag),
         .O_flash_cs_n(S_cs),.O_flash_sclk(S_sclk),.O_flash_mosi(S_mosi),.I_flash_miso(S_miso),
-        .I_demo_valid(),
+        .I_demo_valid(1'b0),
         .O_demo_ready(),
-        .I_demo_address(1'b0),
-        .I_demo_length(1'b0),
-        .I_demo_tag(1'b0),
+        .I_demo_address(24'd0),
+        .I_demo_length(16'd0),
+        .I_demo_tag(16'd0),
         .O_demo_read_valid(),
         .I_demo_read_ready(1'b1),
         .O_demo_read_data(),
@@ -84,6 +95,23 @@ module font_cache_case(output reg O_done=0);
         input integer code,offset;
         begin glyph_byte=code*37+offset*13+code/256; end
     endfunction
+    // The renderer's independent metadata/data ports must keep serving a pinned
+    // glyph throughout lookup, CLOCK replacement and physical Flash filling.
+    always @(negedge S_clk) if(S_background && !S_reset) begin
+        S_row=1; S_row_slot=S_locked_slot; S_row_number=S_row_number+1'b1;
+    end
+    always @(posedge S_clk) if(S_background && !S_reset && S_row) begin
+        S_background_row=S_row_number;
+        if(u_cache.S_state==u_cache.LOOKUP) S_background_states[0]=1;
+        if(u_cache.S_state==u_cache.VICTIM) S_background_states[1]=1;
+        if(u_cache.S_state==u_cache.FILL) S_background_states[2]=1;
+        if(u_cache.C_meta_write && u_cache.S_meta_address==S_row_slot) S_background_collision=1;
+        #1;
+        if(!S_row_valid || S_row_missing ||
+            S_row_bits!=={glyph_byte(0,S_background_row*2),glyph_byte(0,S_background_row*2+1)})
+            fail("concurrent protected glyph row lost");
+        S_background_reads=S_background_reads+1;
+    end
     task fail;
         input [511:0] message;
         begin $display("FAIL cache: %0s",message); $stop; end
@@ -121,26 +149,52 @@ module font_cache_case(output reg O_done=0);
             @(negedge S_clk); S_row=0;
         end
     endtask
+    task missing_row;
+        input [8:0] slot;
+        input [3:0] number;
+        begin
+            @(negedge S_clk); S_row=1; S_row_slot=slot; S_row_number=number;
+            @(posedge S_clk); #1;
+            if(!S_row_valid || !S_row_missing ||
+                S_row_bits!==(number==0 || number==15 ? 16'hffff : 16'h8001))
+                fail("missing glyph synchronous fallback");
+            @(negedge S_clk); S_row=0;
+        end
+    endtask
     initial begin
         repeat(5) @(negedge S_clk);
         for(S_i=0;S_i<510;S_i=S_i+1)
             for(S_j=0;S_j<32;S_j=S_j+1) u_nor.S_memory[65536+S_i*32+S_j]=glyph_byte(S_i,S_j);
         for(S_j=0;S_j<32;S_j=S_j+1) u_nor.S_memory[65536+8835*32+S_j]=glyph_byte(8835,S_j);
         S_reset=0;
+        missing_row(0,0); missing_row(0,5); missing_row(0,15);
         request(0,1); result(0); S_locked_slot=S_last_slot;
         if(!S_initialized || S_locked!=1) fail("boot arbitration/lock install");
         S_before=u_nor.S_reads; request(0,1); result(0);
         if(u_nor.S_reads!=S_before || S_locked!=1) fail("cache hit issued physical read or relocked");
         request(1,0); result(0); S_pinned_slot=S_last_slot; S_pinned[S_last_slot]=1;
+        @(negedge S_clk); S_background=1;
         for(S_i=2;S_i<400;S_i=S_i+1) begin request(S_i,0); result(0); end
         request(400,0); result(0);
         if(S_last_slot==S_locked_slot || S_last_slot==S_pinned_slot) fail("CLOCK evicted locked/pinned slot");
         S_before=u_nor.S_reads; request(0,0); result(0); request(1,0); result(0);
         if(u_nor.S_reads!=S_before) fail("protected glyph not retained");
+        @(negedge S_clk); S_background=0; #1; S_row=0;
+        if(S_background_reads==0 || S_background_states!==3'b111 || !S_background_collision)
+            fail("concurrent cache read/collision coverage");
         row(S_locked_slot,0,0); row(S_locked_slot,15,0); row(S_pinned_slot,5,1);
+        missing_row(511,5); row(S_locked_slot,0,0);
         S_pinned={400{1'b1}}; S_before=u_nor.S_reads; request(401,0); result(2);
         if(u_nor.S_reads!=S_before) fail("full protected cache performed a read");
         S_pinned=0; S_pinned[S_pinned_slot]=1;
+        // Add a live pin after candidate decoding, immediately before the
+        // eviction decision. An earlier sampled pin mask would lose this pin.
+        request(401,0);
+        wait(u_cache.S_state==u_cache.VICTIM && u_cache.S_victim);
+        @(negedge S_clk);
+        S_late_pinned_slot=u_cache.S_cursor; S_pinned[S_late_pinned_slot]=1;
+        result(0);
+        if(S_last_slot==S_late_pinned_slot) fail("late pin did not protect eviction candidate");
         request(1,1); result(0); if(S_locked!=2) fail("lock existing glyph");
         request(402,1); result(3); request(8836,0); result(1);
         // Real SAVE reserves the complete sequence; RAM row reads keep working.
@@ -160,6 +214,16 @@ module font_cache_case(output reg O_done=0);
         request(406,0); result(0);
         request(8835,0); result(0); row(S_last_slot,15,8835);
         if(S_errors!=3) fail("font error telemetry");
+        // Metadata is cleared by a real bounded sweep after common reset;
+        // stale glyph data may remain in RAM, but every old slot is invalid.
+        @(negedge S_clk); S_reset=1; S_pinned=0;
+        repeat(4) @(negedge S_clk); S_reset=0; #1;
+        if(S_get_ready || S_result_valid) fail("cache admitted request before reset sweep");
+        missing_row(S_last_slot,0);
+        wait(S_get_ready);
+        for(S_i=0;S_i<400;S_i=S_i+1) missing_row(S_i,5);
+        request(8835,0); result(0); row(S_last_slot,15,8835);
+        if(S_misses!=1 || S_locked!=0 || S_errors!=0) fail("metadata reset/reload accounting");
         O_done=1;
     end
 endmodule

@@ -154,12 +154,17 @@ module playlist_index_builder (
         (O_error==0 && S_parser_done_valid && S_parser_error==0 && S_parser_count==0) ? 4'd5 : 4'd0;
     wire [3:0] S_effective_error=S_committed ? 4'd0 : prefer_error(O_error,S_current_error);
     wire S_stop=S_active && S_effective_error!=0;
+    // A same-edge retirement verdict depends on the byte handshake. Only stored
+    // errors or independent stop causes may feed source valid / parser ready.
+    wire S_cancel=S_active && !S_committed &&
+        (O_error!=0 || !S_media_matches || I_abort || I_stream_error);
     wire S_parser_byte_valid=S_active && !S_parser_done && !S_stop && !S_retired && S_byte_matches && I_byte_valid;
     wire S_parser_item_ready=S_state==ACK && !S_stop;
     wire S_store_item_valid=S_state==ITEM && !S_stop;
     wire S_store_string_valid=S_state==SEND && !S_stop;
     wire S_store_finish_valid=S_state==FINISH && !S_stop;
     wire S_store_commit_valid=S_state==COMMIT && S_retired && !S_stop && !S_committed;
+    wire S_directory_ready;
     assign O_start_ready=!I_reset && S_state==IDLE &&
         (I_directory_mode ? S_directory_ready : (S_parser_ready && S_store_ready));
     // Do not feed a retirement verdict back into readiness: retirement checks this
@@ -167,7 +172,7 @@ module playlist_index_builder (
     assign O_byte_ready=!I_reset && S_active && (!S_byte_matches || O_error!=0 || !S_media_matches ||
         I_abort || I_stream_error || S_parser_done || S_retired || S_parser_byte_ready);
     assign O_retire_ready=!I_reset && S_active && !S_retired;
-    assign O_source_cancel=S_active && !S_retired && S_stop;
+    assign O_source_cancel=!S_retired && S_cancel;
     assign O_source_tag=O_tag;
     assign O_source_generation=O_generation;
     assign O_busy=S_state!=IDLE;
@@ -184,7 +189,7 @@ module playlist_index_builder (
         begin prefer_error=error_rank(new_error)>error_rank(old_error) ? new_error : old_error; end
     endfunction
 
-    wire S_directory_ready,S_directory_done,S_directory_committed;
+    wire S_directory_done,S_directory_committed;
     wire [3:0] S_directory_error;
     wire [6:0] S_directory_count;
     wire [7:0] S_directory_warnings;
@@ -212,7 +217,7 @@ module playlist_index_builder (
         .I_clk(I_clk),.I_reset(I_reset),.I_start_valid(S_start && !I_directory_mode),.O_start_ready(S_parser_ready),
         .I_file_size(I_file_size),.I_tag(I_tag),.I_generation(I_generation),
         .I_byte_valid(S_parser_byte_valid),.O_byte_ready(S_parser_byte_ready),.I_byte_data(I_byte_data),.I_byte_last(I_byte_last),
-        .I_abort(S_stop),.I_stream_error(1'b0),.O_busy(),.O_item_valid(S_parser_item),.I_item_ready(S_parser_item_ready),
+        .I_abort(S_cancel),.I_stream_error(1'b0),.O_busy(),.O_item_valid(S_parser_item),.I_item_ready(S_parser_item_ready),
         .O_item_index(),.O_policy(S_policy),.O_duration(S_duration),.O_transition_ms(S_ms),.O_transition(S_transition),
         .O_file_length(S_file_length),.O_audio_length(S_audio_length),.O_title_length(S_title_length),
         .I_string_kind(S_kind),.I_string_address(S_address),.O_string_data(S_parser_data),

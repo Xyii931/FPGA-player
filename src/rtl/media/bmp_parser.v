@@ -48,11 +48,12 @@ module bmp_parser (
                           S_header[offset+1], S_header[offset]};
         end
     endfunction
-    assign S_width_raw = header_u32(18);
-    assign S_height_raw = header_u32(22);
+    assign S_width_raw = {S_header[21],S_header[20],S_header[19],S_header[18]};
+    assign S_height_raw = {S_header[25],S_header[24],S_header[23],S_header[22]};
     assign S_height_abs = S_height_raw[31] ? (~S_height_raw + 32'd1) : S_height_raw;
     assign S_bpp_raw = {S_header[29], S_header[28]};
-    assign S_offset_raw = header_u32(10);
+    // Expose memory reads in the expression so simulators track header changes.
+    assign S_offset_raw = {S_header[13],S_header[12],S_header[11],S_header[10]};
     // Geometry is rejected before these bounded results can be accepted.
     // Legal stride <= 7680 (13 bits), height <= 1080 (11 bits).
     assign S_stride = (S_bpp_raw == 24) ?

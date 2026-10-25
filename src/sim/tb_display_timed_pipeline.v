@@ -4,6 +4,21 @@
 module tb_display_timed_pipeline #(
     parameter integer TARGETED=0
 ) ();
+    // Declare shared endpoint buses before their first instance connection.
+    wire  S_m_O_cmd_ready;
+    wire  S_m_O_result_valid;
+    wire [3:0] S_m_O_result_error;
+    wire [2:0] S_m_O_result_op;
+    wire [2:0] S_m_O_result_slot;
+    wire [1:0] S_m_O_result_owner;
+    wire [31:0] S_m_O_result_token;
+    wire [31:0] S_m_O_result_generation;
+    wire [20:0] S_m_O_result_base;
+    wire [17:0] S_m_O_slot_states;
+    wire [191:0] S_m_O_slot_tokens;
+    wire [191:0] S_m_O_slot_generations;
+    wire [17:0] S_m_O_slot_readers;
+    wire [5:0] S_m_O_slot_resident;
     reg S_host_clk=0,S_video_clk=0,S_host_run=1,S_video_run=1,S_reset=0,S_test_pass=0;
     wire S_host_reset;
     always #4 if(S_host_run) S_host_clk=~S_host_clk;
@@ -265,23 +280,9 @@ module tb_display_timed_pipeline #(
         .O_prepare_target(S_prepare_target)
     );
 
-    wire  S_m_O_cmd_ready;
-    wire  S_m_O_result_valid;
-    wire [3:0] S_m_O_result_error;
-    wire [2:0] S_m_O_result_op;
-    wire [2:0] S_m_O_result_slot;
-    wire [1:0] S_m_O_result_owner;
-    wire [31:0] S_m_O_result_token;
-    wire [31:0] S_m_O_result_generation;
-    wire [20:0] S_m_O_result_base;
-    wire [17:0] S_m_O_slot_states;
-    wire [191:0] S_m_O_slot_tokens;
-    wire [191:0] S_m_O_slot_generations;
     wire [191:0] S_m_O_slot_assets;
     wire [17:0] S_m_O_slot_layouts;
-    wire [17:0] S_m_O_slot_readers;
     wire [11:0] S_m_O_slot_rotations;
-    wire [5:0] S_m_O_slot_resident;
     wire [5:0] S_m_O_slot_stale;
     wire [5:0] S_m_O_cancel_loading;
     wire  S_m_O_token_exhausted;

@@ -15,7 +15,9 @@ module audio_frame_fifo #(
     output wire O_prefilled, O_need_fill
 );
     wire S_full, S_empty;
-    async_fifo #(.DATA_BITS(48),.ADDR_BITS(ADDR_BITS)) u_fifo (
+    // Preserve all 48 PCM bits and the configured capacity; reserve the small
+    // RAM pool for control, display and filesystem buffers.
+    async_fifo #(.DATA_BITS(48),.ADDR_BITS(ADDR_BITS),.USE_BRAM32K(1)) u_fifo (
         .I_write_clk(I_write_clk),.I_read_clk(I_read_clk),.I_async_reset(I_async_flush),
         .I_write_valid(I_valid),.O_write_ready(O_ready),.I_write_data({I_left,I_right}),
         .O_write_full(S_full),.O_write_level(O_write_level),

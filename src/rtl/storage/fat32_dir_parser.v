@@ -82,12 +82,14 @@ module fat32_dir_parser (
         end
     endfunction
     wire [4:0] S_unit_offset=unit_offset(S_unit);
-    wire [15:0] S_word={entry_byte(S_unit_offset+5'd1),entry_byte(S_unit_offset)};
+    // Explicit entry references keep continuous assignments sensitive to new bytes.
+    // A function reading S_entry implicitly may not re-evaluate for constant args.
+    wire [15:0] S_word=S_entry[S_unit_offset*8+:16];
     wire [8:0] S_unit_index=({4'd0,S_ordinal}-9'd1)*9'd13+{5'd0,S_unit};
-    wire [7:0] S_order_byte=entry_byte(0);
+    wire [7:0] S_order_byte=S_entry[7:0];
     wire [4:0] S_order=S_order_byte[4:0];
     wire S_lfn_header_ok=S_order!=0 && S_order<=20 && !S_order_byte[7] && !S_order_byte[5] &&
-        entry_byte(12)==0 && entry_byte(26)==0 && entry_byte(27)==0;
+        S_entry[12*8+:8]==0 && S_entry[26*8+:8]==0 && S_entry[27*8+:8]==0;
     wire S_valid_long=S_sequence && S_format && S_ascii && S_expected==0 &&
         S_checksum==short_checksum(S_entry[87:0]) && S_lfn_length!=0;
     assign O_start_ready=!I_reset && S_state==IDLE;

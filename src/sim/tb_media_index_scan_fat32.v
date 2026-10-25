@@ -1,13 +1,9 @@
 `timescale 1ns/1ps
 // Real automatic scan + FAT32; only SD host sector traffic is a fixture.
 module tb_media_index_scan_fat32;
+    // Declare shared endpoints before instances and continuous assignments.
     reg S_I_clk=0,S_I_reset=0;
-    wire S_I_media_valid;
-    wire [31:0] S_I_media_generation;
-    always #4 S_I_clk=~S_I_clk;
     reg S_W_I_start_valid=0;
-    wire S_W_O_start_ready;
-    wire S_W_O_lease_request;
     reg S_W_I_lease_grant=0;
     reg S_W_I_abort=0;
     reg [1:0] S_W_I_context=0;
@@ -20,10 +16,54 @@ module tb_media_index_scan_fat32;
     reg [9:0] S_W_I_directory_transition_ms=0;
     reg [2:0] S_W_I_directory_transition=0;
     reg [1:0] S_W_I_directory_order=0;
+    reg S_W_I_done_ready=0;
+    reg S_W_I_acquire_valid=0;
+    reg S_W_I_release_valid=0;
+    reg S_W_I_read_valid=0;
+    reg [5:0] S_W_I_read_index=0;
+    reg [1:0] S_W_I_read_kind=0;
+    reg [6:0] S_W_I_read_address=0;
+    reg [15:0] S_W_I_read_tag=0;
+    reg S_W_I_read_result_ready=0;
+    reg  S_F_I_card_ready=0;
+    reg  S_F_I_unmount=0;
+    reg  S_F_I_mount_valid=0;
+    reg  S_F_I_mount_result_ready=0;
+    reg  S_F_I_sd_request_ready=0;
+    reg  S_F_I_sd_byte_valid=0;
+    reg [7:0] S_F_I_sd_byte_data=0;
+    reg  S_F_I_sd_sector_last=0;
+    reg  S_F_I_sd_request_last=0;
+    reg [1:0] S_F_I_sd_byte_context=0;
+    reg [15:0] S_F_I_sd_byte_tag=0;
+    reg  S_F_I_sd_done_valid=0;
+    reg [1:0] S_F_I_sd_done_context=0;
+    reg [15:0] S_F_I_sd_done_tag=0;
+    reg [3:0] S_F_I_sd_done_error=0;
+    reg  S_F_I_sd_cancel_ready=0;
+    reg  S_F_I_sd_cancel_done_valid=0;
+    reg [1:0] S_F_I_sd_cancel_done_context=0;
+    reg [15:0] S_F_I_sd_cancel_done_tag=0;
+    reg S_test_pass=0;
+    reg [7:0] S_disk[0:4095],S_sector[0:511];
+    reg [4095:0] S_text="[GLOBAL]\norder=list\n[ITEM]\nfile=one.bmp\ntitle=one\n";
+    reg [103:0] S_expected_path="/PLAY/one.bmp";
+    reg [2:0] S_host_state=0;
+    reg S_canceled=0,S_cancel_seen=0,S_injected=0;
+    reg [31:0] S_fail_lba=32'hffffffff;
+    integer S_cycle=0,S_index=0,S_base=0,S_delay=0,S_i,S_j,S_case=0;
+    integer S_revision=0,S_cancel_acks=0,S_before;
+    reg [31:0] S_mount_generation=0;
+    reg [15:0] S_command_tag=0;
+    integer S_enum_count=0;
+    reg [159:0] S_held;
+    wire S_I_media_valid;
+    wire [31:0] S_I_media_generation;
+    wire S_W_O_start_ready;
+    wire S_W_O_lease_request;
     wire S_W_O_lease_active;
     wire S_W_O_busy;
     wire S_W_O_done_valid;
-    reg S_W_I_done_ready=0;
     wire [3:0] S_W_O_error;
     wire [3:0] S_W_O_list_source_error;
     wire [3:0] S_W_O_list_build_error;
@@ -103,22 +143,14 @@ module tb_media_index_scan_fat32;
     wire [6:0] S_W_O_active_count;
     wire [31:0] S_W_O_active_generation;
     wire [31:0] S_W_O_active_revision;
-    reg S_W_I_acquire_valid=0;
     wire S_W_O_acquire_ready;
     wire S_W_O_snapshot_valid;
     wire [6:0] S_W_O_snapshot_count;
     wire [31:0] S_W_O_snapshot_generation;
     wire [31:0] S_W_O_snapshot_revision;
-    reg S_W_I_release_valid=0;
     wire S_W_O_release_ready;
-    reg S_W_I_read_valid=0;
     wire S_W_O_read_ready;
-    reg [5:0] S_W_I_read_index=0;
-    reg [1:0] S_W_I_read_kind=0;
-    reg [6:0] S_W_I_read_address=0;
-    reg [15:0] S_W_I_read_tag=0;
     wire S_W_O_read_result_valid;
-    reg S_W_I_read_result_ready=0;
     wire [6:0] S_W_O_read_file_length;
     wire [6:0] S_W_O_read_audio_length;
     wire [5:0] S_W_O_read_title_length;
@@ -162,7 +194,6 @@ module tb_media_index_scan_fat32;
     wire [7:0] S_W_I_enum_error;
     wire [3:0] S_W_I_enum_storage_error;
     wire [2:0] S_W_I_enum_warning;
-        wire [1:0] S_runtime_u_scan_O_active_order;
     wire [1:0] S_runtime_u_scan_O_active_base_order;
     wire S_runtime_u_scan_O_active_base_order_explicit;
     wire S_runtime_u_scan_O_reorder_ready;
@@ -172,6 +203,39 @@ module tb_media_index_scan_fat32;
     wire [31:0] S_runtime_u_scan_O_reorder_generation;
     wire [31:0] S_runtime_u_scan_O_reorder_revision;
     wire [5:0] S_runtime_u_scan_O_reorder_current_index;
+    wire [6:0] S_policy_u_scan_O_read_policy;
+    wire  S_F_O_mount_ready;
+    wire  S_F_O_mount_result_valid;
+    wire [7:0] S_F_O_mount_error;
+    wire [3:0] S_F_O_mount_storage_error;
+    wire [31:0] S_F_O_mount_generation;
+    wire  S_F_O_quiescent;
+    wire [31:0] S_F_O_partition_lba;
+    wire [31:0] S_F_O_volume_sectors;
+    wire [31:0] S_F_O_fat_lba;
+    wire [31:0] S_F_O_data_lba;
+    wire [31:0] S_F_O_cluster_count;
+    wire [31:0] S_F_O_root_cluster;
+    wire [7:0] S_F_O_sectors_per_cluster;
+    wire [2:0] S_F_O_cluster_shift;
+    wire [31:0] S_F_O_open_first_cluster;
+    wire [31:0] S_F_O_open_sectors;
+    wire [7:0] S_F_O_open_attr;
+    wire  S_F_O_sd_request_valid;
+    wire [31:0] S_F_O_sd_lba;
+    wire [7:0] S_F_O_sd_count;
+    wire [1:0] S_F_O_sd_context;
+    wire [1:0] S_F_O_sd_priority;
+    wire [15:0] S_F_O_sd_tag;
+    wire  S_F_O_sd_byte_ready;
+    wire  S_F_O_sd_done_ready;
+    wire  S_F_O_sd_cancel_valid;
+    wire [1:0] S_F_O_sd_cancel_context;
+    wire [15:0] S_F_O_sd_cancel_tag;
+    wire  S_F_O_sd_cancel_done_ready;
+    wire [15:0] S_expected_enum_tag=S_command_tag+16'd1+S_enum_count;
+    always #4 S_I_clk=~S_I_clk;
+        wire [1:0] S_runtime_u_scan_O_active_order;
 media_index_scan u_scan (
         .I_clk(S_I_clk),
         .I_reset(S_I_reset),
@@ -356,55 +420,6 @@ media_index_scan u_scan (
         .I_order_override(1'b0),
         .I_runtime_order(2'd0)
     );
-    wire [6:0] S_policy_u_scan_O_read_policy;
-    reg  S_F_I_card_ready=0;
-    reg  S_F_I_unmount=0;
-    reg  S_F_I_mount_valid=0;
-    wire  S_F_O_mount_ready;
-    wire  S_F_O_mount_result_valid;
-    reg  S_F_I_mount_result_ready=0;
-    wire [7:0] S_F_O_mount_error;
-    wire [3:0] S_F_O_mount_storage_error;
-    wire [31:0] S_F_O_mount_generation;
-    wire  S_F_O_quiescent;
-    wire [31:0] S_F_O_partition_lba;
-    wire [31:0] S_F_O_volume_sectors;
-    wire [31:0] S_F_O_fat_lba;
-    wire [31:0] S_F_O_data_lba;
-    wire [31:0] S_F_O_cluster_count;
-    wire [31:0] S_F_O_root_cluster;
-    wire [7:0] S_F_O_sectors_per_cluster;
-    wire [2:0] S_F_O_cluster_shift;
-    wire [31:0] S_F_O_open_first_cluster;
-    wire [31:0] S_F_O_open_sectors;
-    wire [7:0] S_F_O_open_attr;
-    wire  S_F_O_sd_request_valid;
-    reg  S_F_I_sd_request_ready=0;
-    wire [31:0] S_F_O_sd_lba;
-    wire [7:0] S_F_O_sd_count;
-    wire [1:0] S_F_O_sd_context;
-    wire [1:0] S_F_O_sd_priority;
-    wire [15:0] S_F_O_sd_tag;
-    reg  S_F_I_sd_byte_valid=0;
-    wire  S_F_O_sd_byte_ready;
-    reg [7:0] S_F_I_sd_byte_data=0;
-    reg  S_F_I_sd_sector_last=0;
-    reg  S_F_I_sd_request_last=0;
-    reg [1:0] S_F_I_sd_byte_context=0;
-    reg [15:0] S_F_I_sd_byte_tag=0;
-    reg  S_F_I_sd_done_valid=0;
-    wire  S_F_O_sd_done_ready;
-    reg [1:0] S_F_I_sd_done_context=0;
-    reg [15:0] S_F_I_sd_done_tag=0;
-    reg [3:0] S_F_I_sd_done_error=0;
-    wire  S_F_O_sd_cancel_valid;
-    reg  S_F_I_sd_cancel_ready=0;
-    wire [1:0] S_F_O_sd_cancel_context;
-    wire [15:0] S_F_O_sd_cancel_tag;
-    reg  S_F_I_sd_cancel_done_valid=0;
-    wire  S_F_O_sd_cancel_done_ready;
-    reg [1:0] S_F_I_sd_cancel_done_context=0;
-    reg [15:0] S_F_I_sd_cancel_done_tag=0;
 
     fat32_core u_files (
         .I_clk(S_I_clk),
@@ -549,16 +564,6 @@ media_index_scan u_scan (
         .I_sd_cancel_done_context(S_F_I_sd_cancel_done_context),
         .I_sd_cancel_done_tag(S_F_I_sd_cancel_done_tag)
     );
-    reg S_test_pass=0;
-    reg [7:0] S_disk[0:4095],S_sector[0:511];
-    reg [4095:0] S_text="[GLOBAL]\norder=list\n[ITEM]\nfile=one.bmp\ntitle=one\n";
-    reg [103:0] S_expected_path="/PLAY/one.bmp";
-    reg [2:0] S_host_state=0;
-    reg S_canceled=0,S_cancel_seen=0,S_injected=0;
-    reg [31:0] S_fail_lba=32'hffffffff;
-    integer S_cycle=0,S_index=0,S_base=0,S_delay=0,S_i,S_j,S_case=0;
-    integer S_revision=0,S_cancel_acks=0,S_before;
-    reg [31:0] S_mount_generation=0;
     task fail;
         input [767:0] message;
         begin $display("FAIL: media_index_scan_fat32 case %0d: %0s",S_case,message); $stop; end
@@ -664,10 +669,6 @@ media_index_scan u_scan (
     end
 
 
-    reg [15:0] S_command_tag=0;
-    wire [15:0] S_expected_enum_tag=S_command_tag+16'd1+S_enum_count;
-    integer S_enum_count=0;
-    reg [159:0] S_held;
     always @(posedge S_I_clk) if(!S_I_reset) begin
         if(S_W_O_enum_valid && S_W_I_enum_ready) begin
             if(S_W_O_enum_tag!==S_expected_enum_tag ||

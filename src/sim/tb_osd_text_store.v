@@ -126,6 +126,13 @@ module tb_osd_text_store;
         if(!S_pins[7] || S_active) fail("staging glyph pin/active identity");
         read_cell(S_first_bank,0,16'h0041); read_cell(S_first_bank,1,16'h8007);
         if(S_count!=2) fail("byte versus resolved cell count");
+        read_cell(S_first_bank,2,16'h0020); read_cell(S_first_bank,39,16'h0020);
+        read_cell(S_first_bank,40,16'h0020); read_cell(S_first_bank,63,16'h0020);
+        @(negedge S_clk); S_query_line=12; S_read=1;
+        @(posedge S_clk); #1;
+        if(!S_read_valid || S_query_valid || S_cell!==16'h0020) fail("invalid descriptor blank fallback");
+        @(negedge S_clk); S_read=0; S_query_line=0;
+        read_cell(S_first_bank,1,16'h8007);
         offer_frame; S_publish_done=1; S_retired=0;
         repeat(8) begin @(negedge S_clk); if(S_publish_done_ready || S_active || !S_pins[7]) fail("early publication/retirement"); end
         S_retired=1; @(negedge S_clk); S_publish_done=0; S_retired=0; finish_frame(0);

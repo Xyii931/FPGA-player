@@ -8,12 +8,13 @@ cd $build_dir
 transcript file image_transform.log
 vlib work
 vmap work [file join $build_dir work]
+source [file join $script_dir load_player_bram.do]
 vlog -work work [file join $script_dir .. rtl media image_geometry.v]
 vlog -work work [file join $script_dir .. rtl media image_scaler.v]
 vlog -work work [file join $script_dir .. rtl media image_rotate.v]
 vlog -work work [file join $script_dir .. rtl media image_transform.v]
 vlog -work work [file join $script_dir tb_image_transform.v]
-vsim -voptargs=+acc work.tb_image_transform
+vsim -voptargs=+acc work.tb_image_transform {*}$bram_extra_tops
 onfinish stop
 run -all
 if {[examine -radix binary /tb_image_transform/S_test_pass] ne "1"} {

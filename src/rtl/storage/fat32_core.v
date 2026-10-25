@@ -139,6 +139,9 @@ module fat32_core (
     wire S_enum_cancel=S_enum_canceled || I_enum_cancel;
     wire S_enum_invalid=S_enum_lost || !O_mounted;
     wire S_enum_accept=I_enum_valid && O_enum_ready;
+    wire S_path_read_valid,S_path_read_abort,S_path_read_result_ready;
+    wire [31:0] S_path_read_lba;
+    wire [8:0] S_path_buffer_address;
     wire S_namespace_valid=S_scan_owner ? S_dir_read_valid : S_path_read_valid;
     wire [31:0] S_namespace_lba=S_scan_owner ? S_dir_read_lba : S_path_read_lba;
     wire S_namespace_abort=S_scan_owner ? S_dir_read_abort : S_path_read_abort;
@@ -159,12 +162,11 @@ module fat32_core (
     wire S_mount_read_valid,S_mount_read_result_ready;
     wire [31:0] S_mount_read_lba;
     wire [8:0] S_mount_buffer_address;
-    wire S_path_ready,S_path_byte_ready,S_path_result_valid,S_path_read_valid,S_path_read_abort,S_path_read_result_ready;
+    wire S_path_ready,S_path_byte_ready,S_path_result_valid;
     wire [7:0] S_path_attr,S_path_error;
     wire [3:0] S_path_storage_error;
-    wire [31:0] S_path_size,S_path_first_cluster,S_path_sectors,S_path_read_lba;
+    wire [31:0] S_path_size,S_path_first_cluster,S_path_sectors;
     wire [2:0] S_path_warning;
-    wire [8:0] S_path_buffer_address;
     wire S_load_ready,S_load_result,S_close_ready,S_file_read_ready,S_file_cancel_ready;
     wire [1:0] S_load_context;
     wire [7:0] S_load_error;

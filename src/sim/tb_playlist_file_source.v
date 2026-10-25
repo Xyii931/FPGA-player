@@ -2,6 +2,7 @@
 // Real source + parser + store; FAT32 protocol endpoints are explicit stimulus.
 // This case checks adverse routing/retirement, not FAT geometry or actual SD I/O.
 module tb_playlist_file_source;
+    reg S_allow_build=1,S_allow_byte=1,S_allow_retire=0,S_builder_done_ready=0;
     reg  S_I_clk=0;
     reg  S_I_reset=0;
     reg  S_I_media_valid=0;
@@ -392,7 +393,6 @@ playlist_index_builder u_builder (
         .O_reorder_revision(S_runtime_u_builder_O_reorder_revision),
         .O_reorder_current_index(S_runtime_u_builder_O_reorder_current_index)
     );
-    reg S_allow_build=1,S_allow_byte=1,S_allow_retire=0,S_builder_done_ready=0;
     always #4 S_I_clk=~S_I_clk;
     always @* begin
         S_I_build_start_ready=S_B_O_start_ready && S_allow_build;

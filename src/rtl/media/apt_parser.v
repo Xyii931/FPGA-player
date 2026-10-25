@@ -23,9 +23,11 @@ module apt_parser (
     output reg [31:0] O_sample_index,
     output reg O_sample_last
 );
-    localparam [3:0] IDLE=0,HEADER=1,CHECK=2,META=3,FILL=4,BLOCK_CHECK=5,
-        LEFT_READ=6,LEFT_DECODE=7,RIGHT_READ=8,RIGHT_DECODE=9,OUTPUT=10,DRAIN=11,FINISH=12;
-    reg [3:0] S_state;
+    localparam [4:0] IDLE=0,HEADER=1,CHECK=2,META=3,FILL=4,BLOCK_CHECK=5,
+        LEFT_READ=6,LEFT_DECODE=7,RIGHT_READ=8,RIGHT_DECODE=9,OUTPUT=10,DRAIN=11,FINISH=12,
+        DIFF_PAIR=13,DIFF_SUM=14,ACCUMULATE=15,CLIP=16,DECODE_COMMIT=17,
+        CAPACITY=18,CAPACITY_SUM=19;
+    reg [4:0] S_state;
     reg [7:0] S_header[0:23];
     reg [4:0] S_header_pos;
     reg [31:0] S_size,S_pos,S_frame;
@@ -38,17 +40,20 @@ module apt_parser (
     wire [31:0] S_declared_frames={S_header[19],S_header[18],S_header[17],S_header[16]};
     wire [31:0] S_payload_bytes=S_size-32'd24;
     wire [21:0] S_blocks=S_payload_bytes[31:10];
-    wire [63:0] S_capacity={42'd0,S_blocks}*64'd1017;
+    reg [31:0] S_capacity_base,S_capacity;
+    reg S_decode_right;
+    reg [15:0] S_decode_predictor,S_step,S_clipped;
+    reg [6:0] S_decode_index,S_clipped_index;
+    reg [3:0] S_decode_code;
+    reg [16:0] S_pair_a,S_pair_b,S_difference;
+    reg signed [18:0] S_accumulated;
+    reg signed [8:0] S_next_index;
     wire S_length_ok=S_size>=24 && S_payload_bytes[9:0]==0 &&
         (S_blocks==0 ? S_declared_frames==0 :
-        ({32'd0,S_declared_frames}>S_capacity-64'd1017 && {32'd0,S_declared_frames}<=S_capacity));
+        (S_declared_frames>S_capacity-32'd1017 && S_declared_frames<=S_capacity));
     wire [9:0] S_code_index=S_block_frame-10'd1;
     wire [9:0] S_read_address=(S_state==RIGHT_READ ? 10'd516 : 10'd4)+{1'b0,S_code_index[9:1]};
     wire [3:0] S_code=S_code_index[0] ? S_read_byte[7:4] : S_read_byte[3:0];
-    wire S_right_decode=S_state==RIGHT_DECODE;
-    wire [22:0] S_decoded=ima_next(S_right_decode ? S_r_predictor : S_l_predictor,
-        S_right_decode ? S_r_index : S_l_index,S_code);
-
     assign O_start_ready=S_state==IDLE && !I_reset;
     assign O_busy=S_state!=IDLE;
     assign O_header_valid=S_state==META && !I_abort && !I_stream_error && !I_reset;
@@ -85,39 +90,50 @@ module apt_parser (
             endcase
         end
     endfunction
-    function [22:0] ima_next;
-        input [15:0] predictor;
-        input [6:0] index;
-        input [3:0] code;
-        reg [16:0] step,difference;
-        reg signed [18:0] accumulated;
-        reg signed [8:0] next_index;
-        reg [15:0] clipped;
-        reg [6:0] clipped_index;
-        begin
-            step={1'b0,ima_step(index)};
-            difference=step>>3;
-            if(code[0]) difference=difference+(step>>2);
-            if(code[1]) difference=difference+(step>>1);
-            if(code[2]) difference=difference+step;
-            if(code[3]) accumulated=$signed({{3{predictor[15]}},predictor})-$signed({2'd0,difference});
-            else accumulated=$signed({{3{predictor[15]}},predictor})+$signed({2'd0,difference});
-            if(accumulated>19'sd32767) clipped=16'h7fff;
-            else if(accumulated< -19'sd32768) clipped=16'h8000;
-            else clipped=accumulated[15:0];
-            case(code[2:0])
-                4:next_index=$signed({2'd0,index})+9'sd2;
-                5:next_index=$signed({2'd0,index})+9'sd4;
-                6:next_index=$signed({2'd0,index})+9'sd6;
-                7:next_index=$signed({2'd0,index})+9'sd8;
-                default:next_index=$signed({2'd0,index})-9'sd1;
-            endcase
-            if(next_index<0) clipped_index=0;
-            else if(next_index>88) clipped_index=88;
-            else clipped_index=next_index[6:0];
-            ima_next={clipped_index,clipped};
-        end
-    endfunction
+    // Decode scratch advances through registered ROM, pair sums, difference,
+    // signed accumulation and clipping. No intermediate sample is published.
+    // Reset/abort revoke the FSM; every scratch field is overwritten before use.
+    always @(posedge I_clk) begin
+        case(S_state)
+            CAPACITY: S_capacity_base<=({S_blocks,10'd0}-{S_blocks,3'd0});
+            CAPACITY_SUM: S_capacity<=S_capacity_base+{10'd0,S_blocks};
+            LEFT_DECODE,RIGHT_DECODE: begin
+                S_decode_right<=S_state==RIGHT_DECODE;
+                S_decode_predictor<=S_state==RIGHT_DECODE ? S_r_predictor : S_l_predictor;
+                S_decode_index<=S_state==RIGHT_DECODE ? S_r_index : S_l_index;
+                S_step<=ima_step(S_state==RIGHT_DECODE ? S_r_index : S_l_index);
+                S_decode_code<=S_code;
+            end
+            DIFF_PAIR: begin
+                S_pair_a<={4'd0,S_step[15:3]}+(S_decode_code[0] ? {3'd0,S_step[15:2]} : 17'd0);
+                S_pair_b<=(S_decode_code[1] ? {2'd0,S_step[15:1]} : 17'd0)+
+                    (S_decode_code[2] ? {1'b0,S_step} : 17'd0);
+                case(S_decode_code[2:0])
+                    4:S_next_index<=$signed({2'd0,S_decode_index})+9'sd2;
+                    5:S_next_index<=$signed({2'd0,S_decode_index})+9'sd4;
+                    6:S_next_index<=$signed({2'd0,S_decode_index})+9'sd6;
+                    7:S_next_index<=$signed({2'd0,S_decode_index})+9'sd8;
+                    default:S_next_index<=$signed({2'd0,S_decode_index})-9'sd1;
+                endcase
+            end
+            DIFF_SUM: S_difference<=S_pair_a+S_pair_b;
+            ACCUMULATE: begin
+                if(S_decode_code[3]) S_accumulated<=
+                    $signed({{3{S_decode_predictor[15]}},S_decode_predictor})-$signed({2'd0,S_difference});
+                else S_accumulated<=
+                    $signed({{3{S_decode_predictor[15]}},S_decode_predictor})+$signed({2'd0,S_difference});
+            end
+            CLIP: begin
+                if(S_accumulated>19'sd32767) S_clipped<=16'h7fff;
+                else if(S_accumulated< -19'sd32768) S_clipped<=16'h8000;
+                else S_clipped<=S_accumulated[15:0];
+                if(S_next_index<0) S_clipped_index<=0;
+                else if(S_next_index>88) S_clipped_index<=88;
+                else S_clipped_index<=S_next_index[6:0];
+            end
+            default: begin end
+        endcase
+    end
 
     // A single synchronous read/write port; RAM contents are excluded until filled.
     always @(posedge I_clk) begin
@@ -174,17 +190,25 @@ module apt_parser (
                         end
                     end
                     LEFT_READ:S_state<=LEFT_DECODE;
-                    LEFT_DECODE:begin
-                        S_l_predictor<=S_decoded[15:0]; S_l_index<=S_decoded[22:16];
-                        S_state<=RIGHT_READ;
+                    LEFT_DECODE,RIGHT_DECODE:S_state<=DIFF_PAIR;
+                    DIFF_PAIR:S_state<=DIFF_SUM;
+                    DIFF_SUM:S_state<=ACCUMULATE;
+                    ACCUMULATE:S_state<=CLIP;
+                    CLIP:S_state<=DECODE_COMMIT;
+                    DECODE_COMMIT:begin
+                        if(S_decode_right) begin
+                            S_r_predictor<=S_clipped; S_r_index<=S_clipped_index;
+                            O_left<={S_l_predictor,8'd0}; O_right<={S_clipped,8'd0};
+                            O_sample_index<=S_frame; O_sample_last<=S_frame+32'd1==O_total_frames;
+                            O_sample_valid<=1; S_state<=OUTPUT;
+                        end else begin
+                            S_l_predictor<=S_clipped; S_l_index<=S_clipped_index;
+                            S_state<=RIGHT_READ;
+                        end
                     end
                     RIGHT_READ:S_state<=RIGHT_DECODE;
-                    RIGHT_DECODE:begin
-                        S_r_predictor<=S_decoded[15:0]; S_r_index<=S_decoded[22:16];
-                        O_left<={S_l_predictor,8'd0}; O_right<={S_decoded[15:0],8'd0};
-                        O_sample_index<=S_frame; O_sample_last<=S_frame+32'd1==O_total_frames;
-                        O_sample_valid<=1; S_state<=OUTPUT;
-                    end
+                    CAPACITY:S_state<=CAPACITY_SUM;
+                    CAPACITY_SUM:S_state<=CHECK;
                     OUTPUT:if(O_sample_valid && I_sample_ready) begin
                         S_frame<=S_frame+32'd1;
                         if(O_sample_last) S_state<=DRAIN;
@@ -202,7 +226,7 @@ module apt_parser (
                         S_pos<=S_pos+32'd1;
                         if(S_state==HEADER) begin
                             S_header[S_header_pos]<=I_byte_data; S_header_pos<=S_header_pos+1'b1;
-                            if(S_header_pos==23) S_state<=CHECK;
+                            if(S_header_pos==23) S_state<=CAPACITY;
                         end else begin
                             S_block_pos<=S_block_pos+1'b1;
                             case(S_block_pos)

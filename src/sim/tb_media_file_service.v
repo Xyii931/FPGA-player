@@ -455,7 +455,8 @@ module tb_media_file_service;
             @(negedge S_I_clk); S_I_client_open_result_ready[client]=0;
         end
     endtask
-    task read_file;
+    // Concurrent clients need independent task arguments and epoch storage.
+    task automatic read_file;
         input integer client;
         reg [15:0] epoch;
         begin
@@ -506,6 +507,7 @@ module tb_media_file_service;
     endtask
     initial begin
         for(S_i=0;S_i<3072;S_i=S_i+1) S_disk[S_i]=0;
+        S_disk[0]=8'heb; S_disk[1]=8'h58; S_disk[2]=8'h90;
         for(S_i=0;S_i<3;S_i=S_i+1) S_seen[S_i]=0;
         put16(11,512); S_disk[13]=1; put16(14,32); S_disk[16]=2;
         put32(32,70000); put32(36,600); put32(44,2); put16(510,16'haa55);
@@ -524,11 +526,13 @@ module tb_media_file_service;
         @(negedge S_I_clk); S_I_reset=1;
         repeat(4) @(negedge S_I_clk); S_I_reset=0; S_I_card_ready=1;
         mount_card;
+        $display("PROGRESS media_file_service: mounted");
         @(negedge S_I_clk); S_I_lease_request=4'b0111;
         wait(S_O_lease_grant[2:0]==3'b111);
         @(negedge S_I_clk); S_I_lease_active=4'b0111; S_I_lease_request=0;
         open_file(0,0,8,"/PIC.BIN"); open_file(1,1,6,"/A.BIN"); open_file(2,2,6,"/B.BIN");
         if(S_O_descriptors!==3'b111) fail("three real descriptors");
+        $display("PROGRESS media_file_service: three descriptors opened");
         fork read_file(0); read_file(1); read_file(2); join
         wait(S_O_client_done_valid[0]); #1; S_held_done=S_O_client_done[94:0];
         // A held context0 result cannot stop contexts1/2 or change its payload.
@@ -541,6 +545,7 @@ module tb_media_file_service;
         S_I_client_done_ready[0]=1; wait(S_done_seen[0]);
         @(negedge S_I_clk);
         for(S_i=0;S_i<3;S_i=S_i+1) if(S_seen[S_i]!=64) fail("three file bytes");
+        $display("PROGRESS media_file_service: concurrent reads retired");
         // Scan cannot take context0 until image closes and releases its lease.
         S_I_lease_request[3]=1;
         repeat(8) begin @(negedge S_I_clk); if(S_O_lease_grant[3]) fail("stole image context"); end
@@ -549,6 +554,7 @@ module tb_media_file_service;
         S_done_seen=0; S_seen[1]=0; S_seen[2]=0;
         fork enumerate_root; read_file(1); read_file(2); join
         wait(S_done_seen[2:1]==2'b11);
+        $display("PROGRESS media_file_service: scan/audio sharing retired");
         @(negedge S_I_clk); S_I_lease_active[3]=0;
         // An already completed read still supports a real late cancel and ack.
         S_I_client_cancel[18+:18]={2'd1,16'h101}; S_I_client_cancel_valid[1]=1;
@@ -570,6 +576,7 @@ module tb_media_file_service;
         if(S_O_mounted) fail("card recovery reused old mount");
         mount_card;
         if(S_O_generation!==S_old_generation+1 || S_O_contract_fault) fail("remount generation/fault");
+        $display("PROGRESS media_file_service: remounted");
         // Lose media while an accepted read is in flight; keep all real debts.
         S_check_data=0; S_check_done=0;
         S_I_lease_request=2; wait(S_O_lease_grant[1]);

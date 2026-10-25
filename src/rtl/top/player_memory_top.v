@@ -76,6 +76,7 @@ module player_memory_top (
     output wire [22:0] O_player_view,
     output wire [2879:0] O_player_titles,
     output wire [53:0] O_player_title_lengths,
+    output wire [31:0] O_player_title_serial,
     output wire O_player_all_failed,
     output wire O_player_watchdog_expired,
     output wire O_player_alert_visible,
@@ -618,6 +619,7 @@ module player_memory_top (
     wire [22:0] S_player_O_player_view;
     wire [2879:0] S_player_O_player_titles;
     wire [53:0] S_player_O_player_title_lengths;
+    wire [31:0] S_player_O_player_title_serial;
     wire S_player_O_player_all_failed;
     wire S_player_O_player_watchdog_expired;
     wire S_player_O_player_alert_visible;
@@ -1184,6 +1186,7 @@ module player_memory_top (
         .O_player_view(S_player_O_player_view),
         .O_player_titles(S_player_O_player_titles),
         .O_player_title_lengths(S_player_O_player_title_lengths),
+        .O_player_title_serial(S_player_O_player_title_serial),
         .O_player_all_failed(S_player_O_player_all_failed),
         .O_player_watchdog_expired(S_player_O_player_watchdog_expired),
         .O_player_alert_visible(S_player_O_player_alert_visible),
@@ -1832,6 +1835,7 @@ module player_memory_top (
     assign O_player_view=S_player_O_player_view;
     assign O_player_titles=S_player_O_player_titles;
     assign O_player_title_lengths=S_player_O_player_title_lengths;
+    assign O_player_title_serial=S_player_O_player_title_serial;
     assign O_player_all_failed=S_player_O_player_all_failed;
     assign O_player_watchdog_expired=S_player_O_player_watchdog_expired;
     assign O_player_alert_visible=S_player_O_player_alert_visible;

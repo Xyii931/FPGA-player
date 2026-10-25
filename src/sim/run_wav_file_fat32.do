@@ -8,6 +8,7 @@ cd $build_dir
 transcript file wav_file_fat32.log
 vlib work
 vmap work [file join $build_dir work]
+source [file join $script_dir load_player_bram.do]
 foreach source {fat32_mount.v fat32_chain_walk.v fat32_file_reader.v fat32_dir_stream.v fat32_dir_parser.v fat32_directory.v fat32_path_lookup.v fat32_sector_arbiter.v fat32_sector_port.v fat32_core.v} {
     vlog -work work [file join $script_dir .. rtl storage $source]
 }
@@ -16,7 +17,7 @@ foreach source {common/reset_sync.v common/async_fifo.v media/audio_frame_fifo.v
 }
 vlog -work work [file join $script_dir .. rtl media wav_file_source.v]
 vlog -work work [file join $script_dir tb_wav_file_fat32.v]
-vsim -voptargs=+acc work.tb_wav_file_fat32
+vsim -voptargs=+acc work.tb_wav_file_fat32 {*}$bram_extra_tops
 onfinish stop
 run -all
 if {[examine -radix binary /tb_wav_file_fat32/S_test_pass] ne "1"} {

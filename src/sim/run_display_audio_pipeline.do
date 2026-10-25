@@ -8,6 +8,7 @@ cd $build_dir
 transcript file display_audio_pipeline.log
 vlib work
 vmap work [file join $build_dir work]
+source [file join $script_dir load_player_bram.do]
 foreach source {reset_sync.v async_fifo.v} {
     vlog -work work [file join $script_dir .. rtl common $source]
 }
@@ -18,7 +19,7 @@ foreach source {media/audio_frame_fifo.v media/wav_parser.v media/apt_parser.v m
     vlog -work work [file join $script_dir .. rtl $source]
 }
 vlog -work work [file join $script_dir tb_display_audio_pipeline.v]
-vsim -voptargs=+acc work.tb_display_audio_pipeline
+vsim -voptargs=+acc work.tb_display_audio_pipeline {*}$bram_extra_tops
 onfinish stop
 run -all
 if {[examine -radix binary /tb_display_audio_pipeline/S_test_pass] ne "1"} {

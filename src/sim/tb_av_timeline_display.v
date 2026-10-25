@@ -2,6 +2,21 @@
 // Real host owner + lease/commit CDC + candidate/scanout/reader + slot manager/RAM.
 // Actual deadline scheduler/CDC; only slot loading, logical memory and audio readiness are fixtures.
 module tb_av_timeline_display;
+    // Shared endpoint declarations precede all instance/assign uses.
+    wire  S_m_O_cmd_ready;
+    wire  S_m_O_result_valid;
+    wire [3:0] S_m_O_result_error;
+    wire [2:0] S_m_O_result_op;
+    wire [2:0] S_m_O_result_slot;
+    wire [1:0] S_m_O_result_owner;
+    wire [31:0] S_m_O_result_token;
+    wire [31:0] S_m_O_result_generation;
+    wire [20:0] S_m_O_result_base;
+    wire [17:0] S_m_O_slot_states;
+    wire [191:0] S_m_O_slot_tokens;
+    wire [191:0] S_m_O_slot_generations;
+    wire [17:0] S_m_O_slot_readers;
+    wire [5:0] S_m_O_slot_resident;
     wire S_silence_u_timeline_O_silence_valid;
     reg S_host_clk=0,S_video_clk=0,S_host_run=1,S_video_run=1,S_reset=0,S_test_pass=0;
     wire S_host_reset;
@@ -265,23 +280,9 @@ module tb_av_timeline_display;
         .O_prepare_target(S_prepare_target)
     );
 
-    wire  S_m_O_cmd_ready;
-    wire  S_m_O_result_valid;
-    wire [3:0] S_m_O_result_error;
-    wire [2:0] S_m_O_result_op;
-    wire [2:0] S_m_O_result_slot;
-    wire [1:0] S_m_O_result_owner;
-    wire [31:0] S_m_O_result_token;
-    wire [31:0] S_m_O_result_generation;
-    wire [20:0] S_m_O_result_base;
-    wire [17:0] S_m_O_slot_states;
-    wire [191:0] S_m_O_slot_tokens;
-    wire [191:0] S_m_O_slot_generations;
     wire [191:0] S_m_O_slot_assets;
     wire [17:0] S_m_O_slot_layouts;
-    wire [17:0] S_m_O_slot_readers;
     wire [11:0] S_m_O_slot_rotations;
-    wire [5:0] S_m_O_slot_resident;
     wire [5:0] S_m_O_slot_stale;
     wire [5:0] S_m_O_cancel_loading;
     wire  S_m_O_token_exhausted;

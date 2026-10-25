@@ -101,6 +101,7 @@ module scanout_engine #(
         .O_raster_x(S_raster_x),.O_raster_y(S_raster_y)
     );
     reg S_configured,S_config_taken,S_stopping,S_prefer;
+    reg S_read_valid,C_pixel_good;
     reg [1:0] S_source_mask;
     reg S_from;
     reg [5:0] S_slots;
@@ -388,7 +389,7 @@ module scanout_engine #(
     assign O_read_valid=C_read_mask;
     assign O_read_bank=S_bank_pipe[1];
     assign O_read_x=C_read_x;
-    reg S_read_valid,S_read_hsync,S_read_vsync,S_read_de,S_read_frame,S_read_line,S_read_from,S_read_repeated;
+    reg S_read_hsync,S_read_vsync,S_read_de,S_read_frame,S_read_line,S_read_from,S_read_repeated;
     reg [15:0] S_read_x,S_read_y,S_read_tag;
     reg [31:0] S_read_epoch;
     reg [16:0] S_read_weight;
@@ -396,7 +397,6 @@ module scanout_engine #(
     reg [19:0] S_expected_x;
     reg [63:0] S_expected_token,S_expected_generation,S_expected_epoch;
     reg [31:0] S_expected_tag;
-    reg C_pixel_good;
     always @* begin
         C_pixel_good=1;
         for(C_src=0;C_src<2;C_src=C_src+1)

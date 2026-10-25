@@ -46,9 +46,9 @@ module osd_text_store (
     input wire I_read_valid,
     input wire [5:0] I_read_column,
     output reg O_read_valid,
-    output reg [15:0] O_read_cell
+    output wire [15:0] O_read_cell
 );
-    localparam [3:0] IDLE=0,READY=1,LINE=2,GET_OFFER=3,GET_WAIT=4,PUBLISH=5,WAIT_PUBLISH=6,RESULT=7;
+    localparam [3:0] IDLE=0,READY=1,LINE=2,GET_OFFER=3,GET_WAIT=4,PUBLISH=5,WAIT_PUBLISH=6,RESULT=7,CANCEL=8;
     reg [3:0] S_state;
     reg S_bank,S_lock,S_cancel;
     reg [5:0] S_line_address,S_column;
@@ -60,6 +60,8 @@ module osd_text_store (
     reg [1:0] S_color[0:47];
     reg [5:0] S_count[0:47];
     reg [15:0] S_cells[0:1919];
+    reg [15:0] S_read_cell;
+    reg S_read_in_range;
     reg S_decoder_done;
     reg [1:0] S_decoder_error;
     wire S_decode_start_ready,S_decode_byte_ready,S_decode_valid,S_decode_last,S_decode_busy,S_decode_done;
@@ -72,6 +74,8 @@ module osd_text_store (
     wire S_cell_fire=S_decode_valid && S_decode_ready;
     wire S_ascii_write=S_cell_fire && !S_decode_cell[15];
     wire S_glyph_write=S_state==GET_WAIT && I_get_result_valid && !S_cancel && !I_abort;
+    wire [15:0] S_write_cell=S_ascii_write ? {9'd0,S_decode_cell[6:0]} :
+        (I_get_error==0 && I_get_slot<400 ? {7'b1000000,I_get_slot} : 16'h003f);
     wire [10:0] S_write_address={5'd0,S_line_address}*11'd40+{5'd0,S_column};
     wire [5:0] S_query_address=(I_query_bank ? 6'd24 : 6'd0)+(I_query_layer ? 6'd12 : 6'd0)+{2'd0,I_query_line};
     wire [10:0] S_read_address={5'd0,S_query_address}*11'd40+{5'd0,I_read_column};
@@ -94,6 +98,7 @@ module osd_text_store (
     assign O_query_y=O_query_valid ? S_y[S_query_address] : 9'd0;
     assign O_query_color=O_query_valid ? S_color[S_query_address] : 2'd0;
     assign O_query_count=O_query_valid ? S_count[S_query_address] : 6'd0;
+    assign O_read_cell=S_read_in_range ? S_read_cell : 16'h0020;
     gb2312_text_decoder u_decoder (
         .I_clk(I_clk),.I_reset(I_reset),.I_start_valid(S_start_line && S_line_ok),.O_start_ready(S_decode_start_ready),.I_length(I_length),
         .I_byte_valid(I_byte_valid && S_state==LINE),.O_byte_ready(S_decode_byte_ready),.I_byte_data(I_byte_data),.I_byte_last(I_byte_last),
@@ -102,18 +107,18 @@ module osd_text_store (
     );
     // One write port and one synchronous read port. Valid descriptors delimit RAM.
     always @(posedge I_clk) begin
-        if(S_ascii_write) S_cells[S_write_address]<={9'd0,S_decode_cell[6:0]};
-        else if(S_glyph_write) S_cells[S_write_address]<=I_get_error==0 && I_get_slot<400 ? {7'b1000000,I_get_slot} : 16'h003f;
+        if(S_ascii_write || S_glyph_write) S_cells[S_write_address]<=S_write_cell;
         O_read_valid<=!I_reset && I_read_valid;
-        if(!I_reset && I_read_valid)
-            O_read_cell<=O_query_valid && I_read_column<O_query_count && I_read_column<40 ? S_cells[S_read_address] : 16'h0020;
+        if(!I_reset && I_read_valid) begin
+            S_read_cell<=S_cells[S_read_address];
+            S_read_in_range<=O_query_valid && I_read_column<O_query_count && I_read_column<40;
+        end
     end
     task cancel_frame;
         input [3:0] error;
         begin
-            if(S_bank) begin S_pins1<=0; S_line_valid[47:24]<=0; end
-            else begin S_pins0<=0; S_line_valid[23:0]<=0; end
-            O_error<=error; S_state<=RESULT;
+            // Retire the failed preparation before the wide bank clear.
+            O_error<=error; S_state<=CANCEL;
         end
     endtask
     always @(posedge I_clk or posedge I_reset) begin
@@ -173,6 +178,11 @@ module osd_text_store (
                         else begin S_pins1<=0; S_line_valid[47:24]<=0; end
                         O_error<=0; S_state<=RESULT;
                     end
+                end
+                CANCEL:begin
+                    if(S_bank) begin S_pins1<=0; S_line_valid[47:24]<=0; end
+                    else begin S_pins0<=0; S_line_valid[23:0]<=0; end
+                    S_state<=RESULT;
                 end
                 RESULT:if(I_done_ready) S_state<=IDLE;
                 default:begin O_error<=3; S_state<=RESULT; end

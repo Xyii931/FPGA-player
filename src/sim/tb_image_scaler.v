@@ -1,5 +1,5 @@
 `timescale 1ns/1ps
-module tb_image_scaler;
+module tb_image_scaler #(parameter FULL_SIZE=1);
     reg S_clk=0, S_reset=0, S_start=0, S_abort=0, S_stream_error=0;
     reg [15:0] S_sw=1,S_sh=1,S_dw=1,S_dh=1,S_tag=0;
     reg [31:0] S_generation=0;
@@ -110,6 +110,44 @@ module tb_image_scaler;
         end
     end
 
+    // Track row ownership independently of the RAM implementation. In addition
+    // to final golden pixels, check every selected RAM return one cycle later.
+    reg [1:0] S_buffer_loaded=0;
+    integer S_buffer_row[0:1];
+    integer S_requested_row;
+    reg S_ram_pending=0,S_ram_bank=0;
+    reg [31:0] S_ram_expected=0;
+    always @(posedge S_clk) begin
+        if(S_reset || (S_start && S_start_ready)) begin
+            S_buffer_loaded=0; S_ram_pending=0;
+            S_buffer_row[0]=0; S_buffer_row[1]=0;
+        end else if(S_abort || S_stream_error) S_ram_pending=0;
+        else begin
+            if(S_ram_pending && (S_ram_bank ? u_dut.S_read1 : u_dut.S_read0)!==S_ram_expected)
+                fail("row RAM synchronous read latency / 32-bit channel mapping");
+            S_ram_pending=u_dut.S_read_enable;
+            if(u_dut.S_line_write) begin
+                if(u_dut.S_read_enable || u_dut.S_load_x>=1920)
+                    fail("row write/read collision or truncated out-of-range write address");
+                if(u_dut.S_load_x==0) S_buffer_loaded[u_dut.S_rows_loaded[0]]=0;
+                if(u_dut.S_load_x+1==S_gsw) begin
+                    S_buffer_loaded[u_dut.S_rows_loaded[0]]=1;
+                    S_buffer_row[u_dut.S_rows_loaded[0]]=u_dut.S_rows_loaded;
+                end
+            end
+            if(u_dut.S_read_enable) begin
+                if(u_dut.S_read_x>=1920) fail("truncated out-of-range row read address");
+                S_requested_row=(u_dut.S_state==u_dut.ST_READ00 || u_dut.S_state==u_dut.ST_READ01) ?
+                    u_dut.S_arrival0 : u_dut.S_arrival1;
+                S_ram_bank=S_requested_row%2;
+                if(!S_buffer_loaded[S_ram_bank] || S_buffer_row[S_ram_bank]!=S_requested_row)
+                    fail("selected an incomplete/stale source row after wrap, cancel or reset");
+                S_ram_expected=source_pixel(u_dut.S_read_x,
+                    S_bottom ? S_gsh-1-S_requested_row : S_requested_row,S_seed);
+            end
+        end
+    end
+
     task launch;
         input integer sw,sh,dw,dh,mode,bottom,seed;
         begin
@@ -170,6 +208,20 @@ module tb_image_scaler;
             result(0,1);
         end
     endtask
+    // Cancel while newly staged scratch is in flight, then immediately reuse
+    // both rows. Scratch is not reset; only a fully computed output may escape.
+    task cancel_stage;
+        input [26:0] stage;
+        begin
+            launch(1,1,2,2,1,0,25);
+            pixel(0,0,1);
+            wait(u_dut.S_state==stage);
+            @(negedge S_clk); S_abort=1; S_stream_error=1;
+            @(posedge S_clk); @(negedge S_clk); S_abort=0; S_stream_error=0;
+            result(4,0);
+            successful(2,3,5,4,1,1,26);
+        end
+    endtask
     initial begin
         S_reset=1; repeat (4) @(negedge S_clk); S_reset=0;
         // Identity, half-pixel ties, repeated source rows/columns, trailing-row drain,
@@ -185,12 +237,14 @@ module tb_image_scaler;
             successful(1920,2,640,1,S_j%2,S_j/2,8);
             successful(1,1080,1,640,S_j%2,S_j/2,9);
         end
+        if(FULL_SIZE) begin
         successful(640,480,640,480,0,0,11);
         successful(640,480,360,480,1,1,12);
         successful(1920,1080,640,360,1,0,13);
         successful(1920,1080,640,360,0,1,14);
         successful(1920,1080,1,1,0,0,15);
         successful(1920,1080,1,1,1,1,16);
+        end
         // Invalid geometry must not consume source pixels.
         launch(0,2,2,2,0,0,0); result(1,0);
         launch(1921,2,2,2,0,0,0); result(1,0);
@@ -223,8 +277,19 @@ module tb_image_scaler;
         S_reset=0; S_force_stall=0;
         if (S_done || S_valid || !S_start_ready) fail("reset did not revoke work");
         successful(5,7,3,4,1,1,24);
+        cancel_stage(u_dut.ST_COORD_ADJUST);
+        cancel_stage(u_dut.ST_COORD_BASE);
+        cancel_stage(u_dut.ST_COORD_NEXT);
+        cancel_stage(u_dut.ST_COORD_ROW);
+        cancel_stage(u_dut.ST_BLEND);
+        cancel_stage(u_dut.ST_HMULT);
+        cancel_stage(u_dut.ST_HSUM);
+        cancel_stage(u_dut.ST_VDIFF);
+        cancel_stage(u_dut.ST_VMULT);
+        cancel_stage(u_dut.ST_VSUM);
+        cancel_stage(u_dut.ST_ROUND);
         S_test_pass=1;
-        $display("PASS: scaler direct Q16 golden pixels, both algorithms/directions, full maximum source, stalls/errors/reset");
+        $display("PASS: scaler Q16 golden pixels, both algorithms/directions, stalls/errors/reset, staged cancel/reuse; FULL_SIZE=%0d",FULL_SIZE);
         $finish;
     end
     initial begin #1000000000; fail("timeout"); end

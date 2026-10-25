@@ -2,6 +2,9 @@
 // Real FAT32 core + file source + parser + store. Only the SD sector endpoint is a fixture.
 // This does not exercise SD SPI/CDC/physical hardware or prove media timing.
 module tb_playlist_file_fat32;
+    reg S_allow_build=1,S_allow_byte=1,S_allow_retire=0,S_builder_done_ready=0;
+    reg S_acquire=0,S_release=0,S_index_read=0,S_index_result_ready=0;
+    reg [6:0] S_index_address=0;
     reg  S_I_clk=0;
     reg  S_I_reset=0;
     wire  S_I_media_valid;
@@ -392,7 +395,6 @@ playlist_index_builder u_builder (
         .O_reorder_revision(S_runtime_u_builder_O_reorder_revision),
         .O_reorder_current_index(S_runtime_u_builder_O_reorder_current_index)
     );
-    reg S_allow_build=1,S_allow_byte=1,S_allow_retire=0,S_builder_done_ready=0;
     always #4 S_I_clk=~S_I_clk;
     always @* begin
         S_I_build_start_ready=S_B_O_start_ready && S_allow_build;
@@ -402,8 +404,6 @@ playlist_index_builder u_builder (
         S_I_build_cancel_tag=S_B_O_source_tag;
         S_I_build_cancel_generation=S_B_O_source_generation;
     end
-    reg S_acquire=0,S_release=0,S_index_read=0,S_index_result_ready=0;
-    reg [6:0] S_index_address=0;
     reg  S_F_I_card_ready=0;
     reg  S_F_I_unmount=0;
     reg  S_F_I_mount_valid=0;

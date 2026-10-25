@@ -31,7 +31,7 @@ module osd_line_renderer (
     output wire O_write_ink,
     output reg [31:0] O_missing_rows
 );
-    localparam [3:0] IDLE=0,CLEAR=1,QUERY=2,CELL_REQ=3,CELL_WAIT=4,FONT_REQ=5,FONT_WAIT=6,PIXELS=7,DONE=8;
+    localparam [3:0] IDLE=0,CLEAR=1,QUERY=2,CELL_REQ=3,CELL_WAIT=4,FONT_REQ=5,FONT_WAIT=6,PIXELS=7,DONE=8,QUERY_CHECK=9,ASCII_ROW=10;
     reg [3:0] S_state;
     reg S_bank,S_layer;
     reg [8:0] S_y;
@@ -40,10 +40,15 @@ module osd_line_renderer (
     reg [9:0] S_origin,S_clear_x;
     reg [1:0] S_color;
     reg [15:0] S_cell,S_bits;
+    reg S_desc_valid;
+    reg [9:0] S_desc_x;
+    reg [8:0] S_desc_y;
+    reg [1:0] S_desc_color;
+    reg [5:0] S_desc_count;
     wire [7:0] S_ascii;
     wire [10:0] S_pixel_x={1'b0,S_origin}+{1'b0,S_column,4'd0}+{7'd0,S_pixel};
-    wire [9:0] S_row_offset={1'b0,S_y}-{1'b0,I_query_y};
-    ascii_font8x16 u_ascii(.I_char(I_read_cell[7:0]),.I_row(S_row),.O_bits(S_ascii));
+    wire [9:0] S_row_offset={1'b0,S_y}-{1'b0,S_desc_y};
+    ascii_font8x16 u_ascii(.I_char(S_cell[7:0]),.I_row(S_row),.O_bits(S_ascii));
     assign O_start_ready=!I_reset && S_state==IDLE;
     assign O_done_valid=!I_reset && S_state==DONE;
     assign O_query_bank=S_bank;
@@ -74,6 +79,7 @@ module osd_line_renderer (
         if(I_reset) begin
             S_state<=IDLE; S_bank<=0; S_layer<=0; S_y<=0; S_line<=0; S_row<=0; S_pixel<=0;
             S_column<=0; S_count<=0; S_origin<=0; S_clear_x<=0; S_color<=0; S_cell<=0; S_bits<=0; O_missing_rows<=0;
+            S_desc_valid<=0; S_desc_x<=0; S_desc_y<=0; S_desc_color<=0; S_desc_count<=0;
         end else case(S_state)
             IDLE:if(I_start_valid) begin
                 S_bank<=I_bank; S_y<=I_y; S_layer<=0; S_line<=0; S_column<=0; S_clear_x<=0; S_state<=CLEAR;
@@ -82,16 +88,21 @@ module osd_line_renderer (
                 if(S_clear_x==639) begin S_clear_x<=0; S_state<=QUERY; end
                 else S_clear_x<=S_clear_x+1'b1;
             end
-            QUERY:if(I_query_valid && I_query_count!=0 && I_query_y<=S_y && S_row_offset<16) begin
-                S_origin<=I_query_x; S_count<=I_query_count>40 ? 6'd40 : I_query_count;
-                S_color<=I_query_color; S_row<=S_row_offset[3:0]; S_column<=0; S_state<=CELL_REQ;
+            QUERY:begin
+                S_desc_valid<=I_query_valid; S_desc_x<=I_query_x; S_desc_y<=I_query_y;
+                S_desc_color<=I_query_color; S_desc_count<=I_query_count; S_state<=QUERY_CHECK;
+            end
+            QUERY_CHECK:if(S_desc_valid && S_desc_count!=0 && S_desc_y<=S_y && S_row_offset<16) begin
+                S_origin<=S_desc_x; S_count<=S_desc_count>40 ? 6'd40 : S_desc_count;
+                S_color<=S_desc_color; S_row<=S_row_offset[3:0]; S_column<=0; S_state<=CELL_REQ;
             end else next_line;
             CELL_REQ:S_state<=CELL_WAIT;
             CELL_WAIT:if(I_read_valid) begin
                 S_cell<=I_read_cell; S_pixel<=0;
                 if(I_read_cell[15]) S_state<=FONT_REQ;
-                else begin S_bits<={S_ascii,8'd0}; S_state<=PIXELS; end
+                else S_state<=ASCII_ROW;
             end
+            ASCII_ROW:begin S_bits<={S_ascii,8'd0}; S_state<=PIXELS; end
             FONT_REQ:S_state<=FONT_WAIT;
             FONT_WAIT:if(I_row_valid) begin
                 S_bits<=I_row_bits; S_pixel<=0; S_state<=PIXELS;

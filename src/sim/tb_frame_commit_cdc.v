@@ -136,22 +136,22 @@ module tb_frame_commit_cdc;
         end
     endtask
     task submit;
-        input [31:0] config;
+        input [31:0] config_value;
         input [15:0] tag;
         begin
             S_case=S_case+1;
-            @(negedge S_I_host_clk); S_I_config=config; S_I_tag=tag; S_I_submit_valid=1;
+            @(negedge S_I_host_clk); S_I_config=config_value; S_I_tag=tag; S_I_submit_valid=1;
             @(posedge S_I_host_clk); while(!S_O_submit_ready) @(posedge S_I_host_clk);
             @(negedge S_I_host_clk); S_I_submit_valid=0; S_I_config=32'hffffffff; S_I_tag=16'hffff;
         end
     endtask
     task prepare_start;
-        input [31:0] config;
+        input [31:0] config_value;
         input [15:0] tag;
         begin
             wait(S_O_prepare_valid); #1;
             repeat(3) begin @(negedge S_I_video_clk);
-                if(!S_O_prepare_valid || S_O_pending_config!==config || S_O_pending_tag!==tag) fail("prepare payload snapshot/stability"); end
+                if(!S_O_prepare_valid || S_O_pending_config!==config_value || S_O_pending_tag!==tag) fail("prepare payload snapshot/stability"); end
             S_I_prepare_ready=1; @(negedge S_I_video_clk); S_I_prepare_ready=0;
         end
     endtask
@@ -172,13 +172,13 @@ module tb_frame_commit_cdc;
     endtask
     task retire;
         input old;
-        input [31:0] config,epoch;
+        input [31:0] config_value,epoch;
         input [15:0] tag;
         input [3:0] error;
         reg [80:0] saved;
         begin
             wait(S_O_retire_valid); #1;
-            if(S_O_retire_old!==old || S_O_retire_config!==config || S_O_retire_epoch!==epoch || S_O_retire_tag!==tag)
+            if(S_O_retire_old!==old || S_O_retire_config!==config_value || S_O_retire_epoch!==epoch || S_O_retire_tag!==tag)
                 fail("wrong old/candidate retirement identity");
             saved={S_O_retire_old,S_O_retire_config,S_O_retire_epoch,S_O_retire_tag};
             repeat(4) begin @(negedge S_I_video_clk);

@@ -32,7 +32,7 @@ module fb_line_reader #(
     input wire I_read_bank,
     input wire [9:0] I_read_x,
     output reg O_pixel_valid,
-    output reg [31:0] O_rgba,
+    output wire [31:0] O_rgba,
     output reg O_pixel_bank,
     output reg [9:0] O_pixel_x,
     output reg [31:0] O_pixel_token,O_pixel_generation,O_pixel_epoch,
@@ -91,6 +91,8 @@ module fb_line_reader #(
     reg [31:0] S_bank_token[0:1],S_bank_generation[0:1],S_bank_epoch[0:1];
     reg [15:0] S_bank_tag[0:1];
     reg [31:0] S_line0[0:639],S_line1[0:639];
+    reg [31:0] S_line0_q,S_line1_q;
+    reg S_read_bank;
     wire S_request_wready,S_request_valid,S_request_ready;
     wire [REQUEST_BITS-1:0] S_request_data;
     wire S_event_wready,S_event_valid,S_event_ready;
@@ -214,11 +216,18 @@ module fb_line_reader #(
         end
     end
     always @(posedge I_video_clk) begin
-        if (S_read_fire) begin
-            if (I_read_bank) O_rgba<=S_line1[I_read_x];
-            else O_rgba<=S_line0[I_read_x];
-        end
+        if (S_read_fire && !I_read_bank) S_line0_q<=S_line0[I_read_x];
     end
+    always @(posedge I_video_clk) begin
+        if (S_read_fire && I_read_bank) S_line1_q<=S_line1[I_read_x];
+    end
+    always @(posedge I_video_clk) begin
+        if (S_read_fire) S_read_bank<=I_read_bank;
+    end
+    // Select after the two synchronous RAM outputs. A shared output register
+    // with a conditional read of two arrays prevents TD's block RAM inference.
+    // Holding the selection when idle preserves the last accepted pixel.
+    assign O_rgba=S_read_bank ? S_line1_q : S_line0_q;
     always @(posedge I_host_clk or posedge S_host_reset) begin
         if (S_host_reset) begin
             S_state<=IDLE; S_job<=0; S_error<=0; S_memory_error<=0;

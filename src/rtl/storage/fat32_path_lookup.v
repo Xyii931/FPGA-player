@@ -43,6 +43,7 @@ module fat32_path_lookup (
     wire [7:0] S_entry_attr,S_name,S_dir_error;
     wire [31:0] S_entry_size,S_entry_cluster,S_dir_sectors;
     wire [87:0] S_alias;
+    wire [95:0] S_alias_padded={8'd0,S_alias};
     wire [6:0] S_name_length;
     wire [3:0] S_dir_storage_error;
     wire [2:0] S_warning;
@@ -76,7 +77,9 @@ module fat32_path_lookup (
         S_alias_match=S_token_length=={2'd0,S_alias_length}; S_alias_byte=0;
         for(S_i=0;S_i<12;S_i=S_i+1) begin
             S_alias_byte=0;
-            if(S_i<S_base_length) S_alias_byte=S_alias[S_i*8+:8];
+            // TD checks every unrolled slice, including i=8..11 behind this guard.
+            // Padding keeps those unreachable base-byte reads in range.
+            if(S_i<S_base_length) S_alias_byte=S_alias_padded[S_i*8+:8];
             else if(S_i==S_base_length) S_alias_byte=8'h2e;
             else if(S_i<S_alias_length) S_alias_byte=S_alias[(8+S_i-S_base_length-1)*8+:8];
             if(S_i<S_alias_length && fold_ascii(S_path[(S_token_start+S_i)&63])!=fold_ascii(S_alias_byte))

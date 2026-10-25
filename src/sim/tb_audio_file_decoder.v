@@ -1,5 +1,5 @@
 `timescale 1ns/1ps
-// Independent integer IMA scoreboard; this source/model has not been executed.
+// Independent integer IMA scoreboard; compare every accepted PCM sample.
 module tb_audio_file_decoder;
     reg S_clk=0,S_reset=1,S_start=0,S_valid=0,S_last=0,S_abort=0,S_stream_error=0;
     always #4 S_clk=~S_clk;
@@ -146,6 +146,33 @@ module tb_audio_file_decoder;
             if(S_busy || !S_start_ready || S_samples!=frames || S_headers!=headers || S_done) fail("retirement/sample count");
         end
     endtask
+    task cancel_decode_stage;
+        input [4:0] stage;
+        begin
+            build_apt(4); start_job(6); send_range(0,S_size);
+            wait(u_dut.u_apt.S_state==stage);
+            @(negedge S_clk); S_abort=1; S_stream_error=1;
+            repeat(6) @(negedge S_clk);
+            S_abort=0; S_stream_error=0; finish_job(1,1);
+            build_apt(4); start_job(0); send_range(0,S_size); finish_job(4,1);
+        end
+    endtask
+    // Validate large file arithmetic using only the header, then abort before
+    // any payload. The reference capacities below are independent 64-bit products.
+    task capacity_header;
+        input [31:0] file_size,frames;
+        input legal;
+        begin
+            build_apt(0); S_size=file_size; put32(16,frames);
+            S_expected_frames=frames; S_expected_bytes=file_size-24;
+            start_job(legal ? 6 : 3); send_range(0,24);
+            if(legal) begin
+                wait(S_headers==1); @(negedge S_clk); S_abort=1;
+                repeat(6) @(negedge S_clk); S_abort=0;
+                finish_job(0,1);
+            end else finish_job(0,0);
+        end
+    endtask
     initial begin
         // Standard table constants; scoreboard uses integer arithmetic, not DUT functions.
         S_steps[0]=7; S_steps[1]=8; S_steps[2]=9; S_steps[3]=10; S_steps[4]=11; S_steps[5]=12;
@@ -183,6 +210,15 @@ module tb_audio_file_decoder;
         build_apt(4); start_job(6); send_range(0,24); S_hold=1;
         wait(S_header_valid); repeat(5) @(negedge S_clk);
         S_abort=1; repeat(6) @(negedge S_clk); S_abort=0; S_hold=0; finish_job(0,0);
+        cancel_decode_stage(u_dut.u_apt.DIFF_PAIR);
+        cancel_decode_stage(u_dut.u_apt.DIFF_SUM);
+        cancel_decode_stage(u_dut.u_apt.ACCUMULATE);
+        cancel_decode_stage(u_dut.u_apt.CLIP);
+        cancel_decode_stage(u_dut.u_apt.DECODE_COMMIT);
+        capacity_header(32'hfffffc18,64'd4194303*64'd1017,1);
+        capacity_header(32'hfffffc18,64'd4194302*64'd1017+1,1);
+        capacity_header(32'hfffffc18,64'd4194303*64'd1017+1,0);
+        capacity_header(32'hfffffc18,64'd4194302*64'd1017,0);
         // A WAV following APT uses the existing real parser without flushing the decoder.
         for(S_i=0;S_i<48;S_i=S_i+1) S_file[S_i]=0;
         S_size=48; S_expected_frames=1; S_expected_offset=44; S_expected_bytes=4; S_early_last=-1;

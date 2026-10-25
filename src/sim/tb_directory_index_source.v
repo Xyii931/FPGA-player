@@ -1,6 +1,12 @@
 `timescale 1ns/1ps
 // Real directory producer + single real index store; enum protocol endpoints are stimulus.
 module tb_directory_index_source;
+    // Declare shared endpoint signals before instance connections.
+    reg S_allow_item=1,S_allow_string=1,S_allow_commit=1;
+    reg S_acquire=0,S_release=0,S_read=0,S_read_result_ready=0;
+    reg [5:0] S_read_index=0;
+    reg [1:0] S_read_kind=0;
+    reg [6:0] S_read_address=0;
     reg  S_I_clk=0;
     reg  S_I_reset=0;
     reg  S_I_media_valid=0;
@@ -304,11 +310,6 @@ media_index_store u_store (
         .O_reorder_revision(S_runtime_u_store_O_reorder_revision),
         .O_reorder_current_index(S_runtime_u_store_O_reorder_current_index)
     );
-    reg S_allow_item=1,S_allow_string=1,S_allow_commit=1;
-    reg S_acquire=0,S_release=0,S_read=0,S_read_result_ready=0;
-    reg [5:0] S_read_index=0;
-    reg [1:0] S_read_kind=0;
-    reg [6:0] S_read_address=0;
     always #4 S_I_clk=~S_I_clk;
     always @* begin
         S_I_store_begin_ready=S_M_O_begin_ready;
@@ -504,6 +505,9 @@ media_index_store u_store (
         entry("tiny.bmp",8,32,53,3); entry("chain.bmp",9,32,100,1);
         entry("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA.bmp",55,32,100,3);
         entry("Zoo.BMP",7,32,100,3); entry("alpha.bmp",9,32,100,3);
+        // Finish copying alpha before stalling the following candidate's
+        // metadata; otherwise its entry header can never be accepted.
+        wait(S_O_enum_entry_ready); @(negedge S_I_clk);
         S_allow_item=0;
         entry("ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ.bmp",49,32,100,3);
         wait(S_O_store_item_valid);

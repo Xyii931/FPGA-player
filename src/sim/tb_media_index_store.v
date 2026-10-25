@@ -1,6 +1,12 @@
 `timescale 1ns/1ps
-// Handwritten records and expected sort order; no filesystem or replacement RTL model.
+// Handwritten records and sort expectations; RAM selected by load_player_bram.do.
 module tb_media_index_store;
+    // Fixed xorshift/Fisher-Yates vectors, logical index zero in the low bits.
+    // These also include self-swaps; added RAM wait cycles must not advance RNG.
+    localparam [47:0] EXPECTED_RANDOM_8=48'h0471460c0084;
+    localparam [383:0] EXPECTED_RANDOM_64=384'h367b7527909df0bea40c4458807cb4985e33b12afdedb5013de940717329396db04c8b90c6a66f7fe84689a8f7fe854a;
+    // Declare shared endpoint signals before instance connections.
+    wire [6:0] S_policy_u_dut_O_read_policy;
     reg S_clk=0,S_reset=1,S_media_valid=1;
     reg [31:0] S_media_generation=32'h12345678,S_generation=32'h12345678;
     reg [15:0] S_tag=0;
@@ -98,7 +104,6 @@ media_index_store u_dut (
         .O_reorder_revision(S_runtime_u_dut_O_reorder_revision),
         .O_reorder_current_index(S_runtime_u_dut_O_reorder_current_index)
     );
-    wire [6:0] S_policy_u_dut_O_read_policy;
     player_order_ctrl u_order (
         .I_clk(S_clk),.I_reset(S_reset),.I_enable(S_owner_enable),.I_session_ready(S_media_valid),
         .I_media_valid(S_media_valid),.I_index_valid(S_active_valid),.I_player_busy(S_owner_player_busy),
@@ -122,14 +127,26 @@ media_index_store u_dut (
         if(!S_owner_hold || S_owner_revision!=S_revision || S_owner_applied_generation!=S_media_generation)
             fail("runtime controller did not preserve APPLY boundary or committed identity");
     end
+    // A retained snapshot can coexist with building the other data bank, but
+    // never with overwriting its own strings. Reordering only writes a free map.
+    always @(posedge S_clk) if(!S_reset && u_dut.S_write_string) begin
+        if(S_snapshot_valid && u_dut.S_build_bank==u_dut.S_snapshot_bank)
+            fail("string write overwrote the retained snapshot bank");
+        if(S_active_valid && u_dut.S_build_bank==u_dut.S_active_bank)
+            fail("string write overwrote the active bank");
+    end
     always #4 S_clk=~S_clk;
     reg [511:0] S_files[0:63],S_audios[0:63];
     reg [319:0] S_titles[0:63];
     integer S_map[0:63],S_random_map[0:63];
     reg [63:0] S_seen;
     reg [511:0] S_text;
+    wire [2:0] S_ram_pass;
+    index_bram_fixture #(.DEPTH(4096)) u_path_ram(.O_pass(S_ram_pass[0]));
+    index_bram_fixture #(.DEPTH(2560)) u_title_ram(.O_pass(S_ram_pass[1]));
+    index_bram_fixture #(.DATA_BITS(32),.ADDR_BITS(11),.DEPTH(1920)) u_scaler_ram(.O_pass(S_ram_pass[2]));
     reg S_test_pass=0;
-    integer S_case=0,S_i,S_j,S_k,S_old_revision;
+    integer S_case=0,S_i,S_j,S_k,S_old_revision,S_swap_phase;
 
     task fail;
         input [639:0] message;
@@ -264,6 +281,9 @@ media_index_store u_dut (
             @(negedge S_clk); S_read_index=index; S_read_kind=kind; S_read_address=address; S_read_tag=S_read_tag+16'd1; S_read=1;
             @(posedge S_clk); while(!S_read_ready) @(posedge S_clk);
             @(negedge S_clk); S_read=0;
+            // The synchronous map read must use the accepted request, even
+            // while the caller changes every non-valid address field.
+            S_read_index=~S_read_index; S_read_kind=3; S_read_address=~S_read_address;
         end
     endtask
     task read_accept;
@@ -462,6 +482,13 @@ media_index_store u_dut (
         if(S_count!=64) fail("64 count wrapped");
         finish_build(0,0); commit_build(64); acquire(64);
         for(S_i=0;S_i<64;S_i=S_i+1) check_record(S_i,S_i);
+        // The final physical title must not address past the RAM or leak a
+        // neighbouring string for any illegal seven-bit title byte address.
+        for(S_i=40;S_i<128;S_i=S_i+1) begin
+            read_request(63,2,S_i); wait(S_read_result); @(negedge S_clk);
+            if(S_read_data!==0) fail("out-of-range final title byte leaked RAM data");
+            read_accept(0);
+        end
         release_snapshot;
         // Comparison reaches byte 64 and leaves the long common prefix untouched.
         S_files[0]={8'h2f,{62{8'h41}},8'h62}; S_files[1]={8'h2f,{62{8'h61}},8'h61};
@@ -488,6 +515,7 @@ media_index_store u_dut (
                 read_request(S_i,0,0); wait(S_read_result); @(negedge S_clk);
                 S_k=S_read_duration-1;
                 if(S_k<0 || S_k>=8 || S_seen[S_k]) fail("shuffle is not a permutation");
+                if(S_k!==EXPECTED_RANDOM_8[S_i*6+:6]) fail("8-item shuffle changed the seeded sequence");
                 S_seen[S_k]=1;
                 if(S_j==0) S_random_map[S_i]=S_k;
                 else if(S_random_map[S_i]!=S_k) fail("same seed did not reproduce order");
@@ -501,6 +529,7 @@ media_index_store u_dut (
         for(S_i=0;S_i<64;S_i=S_i+1) begin
             read_request(S_i,0,0); wait(S_read_result); @(negedge S_clk); S_k=S_read_duration-1;
             if(S_k<0 || S_k>=64 || S_seen[S_k]) fail("64-item shuffle permutation");
+            if(S_k!==EXPECTED_RANDOM_64[S_i*6+:6]) fail("64-item shuffle changed the seeded sequence");
             S_seen[S_k]=1; read_accept(0); check_record(S_i,S_k);
             if(S_i==0) S_random_map[0]=S_k;
         end
@@ -545,7 +574,167 @@ media_index_store u_dut (
         S_abort=0; S_media_valid=1;
         begin_build; item_header(3,0,0,0); put_byte("/",0); reset_all;
         begin_build; append_record(0); finish_build(2,32'hbeef); commit_build(1); acquire(1); check_record(0,0);
-        release_snapshot; S_test_pass=1; $display("PASS: media_index_store"); $finish;
+        release_snapshot;
+
+        // Interrupt each part of a two-write NAME swap. The active map and
+        // retained snapshot must still expose the complete original LIST.
+        reset_all;
+        S_files[0]="/b"; S_files[1]="/A";
+        S_audios[0]=0; S_audios[1]=0; S_titles[0]="B"; S_titles[1]="A";
+        begin_build; append_record(0); append_record(1); finish_build(1,1); commit_build(2); acquire(2);
+        for(S_swap_phase=0;S_swap_phase<3;S_swap_phase=S_swap_phase+1) begin
+            reorder_start(0,1,0);
+            wait(u_dut.S_state==u_dut.SWAP_FIRST);
+            if(S_swap_phase==0) begin
+                @(negedge S_clk); S_reorder_abort=1;
+            end else if(S_swap_phase==1) begin
+                // Accept a snapshot read on the same edge as the first write.
+                read_request(0,0,1);
+                if(u_dut.S_state!=u_dut.SWAP_SECOND) fail("split-swap read did not overlap the first write");
+                S_reorder_abort=1;
+            end else begin
+                wait(u_dut.S_state==u_dut.SWAP_DONE);
+                @(negedge S_clk); S_reorder_abort=1;
+            end
+            @(negedge S_clk); S_reorder_abort=0;
+            reorder_result(2,0);
+            if(!S_active_valid || S_runtime_u_dut_O_active_order!=1) fail("cancelled swap published a partial map");
+            if(S_swap_phase==1) begin
+                wait(S_read_result); @(negedge S_clk);
+                if(S_read_data!==8'h62 || S_read_duration!==1) fail("snapshot read observed an unpublished swap");
+                read_accept(0);
+            end
+            check_record(0,0); check_record(1,1);
+        end
+        // Reuse the aborted map, publish it, and retain the old snapshot result
+        // under backpressure throughout the publication.
+        reorder_start(0,1,0); wait(u_dut.S_state==u_dut.SWAP_FIRST);
+        read_request(0,0,1); reorder_result(0,1);
+        wait(S_read_result); @(negedge S_clk);
+        if(S_read_data!==8'h62 || S_read_duration!==1) fail("map publication retargeted an in-flight snapshot read");
+        read_accept(0); check_record(0,0); check_record(1,1);
+        release_snapshot; acquire(2); check_record(0,1); check_record(1,0);
+
+        // Ordinary build cancellation between swap writes also leaves both
+        // active metadata and its retained map intact; retry fully initializes.
+        begin_build; append_record(0); append_record(1); finish_build(0,1);
+        wait(u_dut.S_state==u_dut.SWAP_SECOND); abort_build(2);
+        check_record(0,1); check_record(1,0); release_snapshot;
+        begin_build; append_record(0); append_record(1); finish_build(0,1); commit_build(2); acquire(2);
+        check_record(0,1); check_record(1,0); release_snapshot;
+        wait(&S_ram_pass);
+        S_test_pass=1; $display("PASS: media_index_store and shared 32K RAM interface"); $finish;
     end
     initial begin #100000000; fail("watchdog timeout"); end
+endmodule
+
+// Same fixture exercises either the functional substitute or the real TD wrapper.
+// Touch every legal address, each byte lane and independent enabled ports.
+module index_bram_fixture #(
+    parameter integer DATA_BITS=8,ADDR_BITS=12,DEPTH=4096
+)(output reg O_pass=0);
+    reg S_clk_a=0,S_clk_b=0;
+    reg S_enable_a=0,S_enable_b=0,S_write_a=0,S_write_b=0;
+    reg [ADDR_BITS-1:0] S_address_a=0,S_address_b=0;
+    reg [DATA_BITS-1:0] S_data_a=0,S_data_b=0;
+    wire [DATA_BITS-1:0] S_q_a,S_q_b;
+    reg [DATA_BITS-1:0] S_held_a,S_held_b;
+    integer i;
+    always #3 if(!O_pass) S_clk_a=~S_clk_a;
+    always #5 if(!O_pass) S_clk_b=~S_clk_b;
+    player_bram32k #(.DATA_BITS(DATA_BITS),.ADDR_BITS(ADDR_BITS),.DEPTH(DEPTH)) u_ram (
+        .I_clk_a(S_clk_a),.I_enable_a(S_enable_a),.I_write_a(S_write_a),
+        .I_address_a(S_address_a),.I_data_a(S_data_a),.O_data_a(S_q_a),
+        .I_clk_b(S_clk_b),.I_enable_b(S_enable_b),.I_write_b(S_write_b),
+        .I_address_b(S_address_b),.I_data_b(S_data_b),.O_data_b(S_q_b));
+    function [DATA_BITS-1:0] pattern;
+        input integer address,seed;
+        integer lane;
+        begin
+            for(lane=0;lane<DATA_BITS/8;lane=lane+1)
+                pattern[lane*8+:8]=(address*73+(address/256)*29+seed+lane*53)&255;
+        end
+    endfunction
+    task fail;
+        input [511:0] message;
+        begin $display("FAIL: RAM width=%0d depth=%0d %0s",DATA_BITS,DEPTH,message); $stop; end
+    endtask
+    task write_a;
+        input integer address,seed;
+        begin
+            @(negedge S_clk_a); S_enable_a=1; S_write_a=1;
+            S_address_a=address; S_data_a=pattern(address,seed);
+            @(posedge S_clk_a); #1;
+        end
+    endtask
+    task write_b;
+        input integer address,seed;
+        begin
+            @(negedge S_clk_b); S_enable_b=1; S_write_b=1;
+            S_address_b=address; S_data_b=pattern(address,seed);
+            @(posedge S_clk_b); #1;
+        end
+    endtask
+    task read_a;
+        input integer address,seed;
+        begin
+            @(negedge S_clk_a); S_enable_a=1; S_write_a=0; S_address_a=address;
+            @(posedge S_clk_a); #1;
+            if(S_q_a!==pattern(address,seed)) fail("port A data / synchronous read latency / address alias");
+        end
+    endtask
+    task read_b;
+        input integer address,seed;
+        begin
+            @(negedge S_clk_b); S_enable_b=1; S_write_b=0; S_address_b=address;
+            @(posedge S_clk_b); #1;
+            if(S_q_b!==pattern(address,seed)) fail("port B data / synchronous read latency / address alias");
+        end
+    endtask
+    task update_lower;
+        integer address;
+        begin
+            for(address=0;address<DEPTH/2;address=address+1) write_a(address,159);
+            @(negedge S_clk_a); S_enable_a=0; S_write_a=0;
+        end
+    endtask
+    task check_upper;
+        integer address;
+        begin
+            for(address=DEPTH/2;address<DEPTH;address=address+1) read_b(address,37);
+            @(negedge S_clk_b); S_enable_b=0;
+        end
+    endtask
+    initial begin
+        // Let the installed TD global startup model release before RAM writes.
+        #100;
+        // Explicitly initialize all contents via the public write port; neither
+        // the contract model nor the hardware wrapper promises startup contents.
+        for(i=0;i<DEPTH;i=i+1) write_a(i,37);
+        @(negedge S_clk_a); S_enable_a=0; S_write_a=0;
+        for(i=0;i<DEPTH;i=i+1) read_b(i,37);
+        @(negedge S_clk_b); S_enable_b=0;
+        fork update_lower; check_upper; join
+        for(i=0;i<DEPTH;i=i+1) read_b(i,i<DEPTH/2 ? 159 : 37);
+        @(negedge S_clk_b); S_enable_b=0;
+        // Exercise the second write port and read it back through the first.
+        for(i=0;i<DEPTH;i=i+1) write_b(i,219);
+        @(negedge S_clk_b); S_enable_b=0; S_write_b=0;
+        for(i=0;i<DEPTH;i=i+1) read_a(i,219);
+        @(negedge S_clk_a); S_enable_a=0;
+        read_b(DEPTH-1,219);
+        @(negedge S_clk_b); S_enable_b=0;
+        S_held_a=S_q_a; S_held_b=S_q_b;
+        // Disabled writes must not change storage or either held output.
+        S_write_a=1; S_write_b=1; S_address_a=0; S_address_b=DEPTH-1;
+        S_data_a=~pattern(0,219); S_data_b=~pattern(DEPTH-1,219);
+        repeat(5) @(negedge S_clk_b);
+        if(S_q_a!==S_held_a || S_q_b!==S_held_b) fail("disabled port changed its read output");
+        S_write_a=0; S_write_b=0;
+        read_a(0,219); read_b(DEPTH-1,219);
+        @(negedge S_clk_a); S_enable_a=0;
+        @(negedge S_clk_b); S_enable_b=0;
+        O_pass=1;
+        $display("PASS: RAM width=%0d depth=%0d full addresses, two ports, independent clocks, enables and byte preservation",DATA_BITS,DEPTH);
+    end
 endmodule

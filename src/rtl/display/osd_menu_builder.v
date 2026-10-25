@@ -1,7 +1,12 @@
 // GB2312 menu/HUD builder. Snapshot changes are reconciled after real publication.
 // Chinese strings are source constants, glyph bitmaps come from W25Q64.
-module osd_menu_builder (
+module osd_menu_builder #(
+    parameter integer EXTERNAL_SNAPSHOT=0,
+    parameter integer EXTERNAL_TITLES=0
+) (
     input wire I_clk,I_reset,
+    input wire I_snapshot_valid,
+    output wire O_snapshot_done,
     input wire [47:0] I_ui,
     input wire I_hud,I_fps_valid,I_mem_valid,
     input wire [15:0] I_fps,
@@ -12,6 +17,10 @@ module osd_menu_builder (
     input wire [22:0] I_view,
     input wire [2879:0] I_titles,
     input wire [53:0] I_title_lengths,
+    output wire O_title_read,
+    output wire [3:0] O_title_line,
+    output wire [5:0] O_title_address,
+    input wire [7:0] I_title_data,
     input wire I_alert,
     input wire [5:0] I_alert_length,
     input wire [319:0] I_alert_text,
@@ -35,22 +44,62 @@ module osd_menu_builder (
     input wire [3:0] I_error,
     output reg [3:0] O_error
 );
-    localparam [2:0] IDLE=0,BEGIN_FRAME=1,LINE_CMD=2,BYTES=3,LINE_WAIT=4,FINISH=5,RESULT=6;
-    reg [2:0] S_state;
+    localparam [3:0] IDLE=0,BEGIN_FRAME=1,LINE_CMD=2,BYTES=3,LINE_WAIT=4,FINISH=5,RESULT=6,
+        NUMBER_A=7,WAIT_A=8,NUMBER_B=9,WAIT_B=10,CLIP_START=11,CLIP_SCAN=12,SKIP_BYTES=13,
+        TITLE_FETCH=14,TITLE_WAIT=15;
+    reg [3:0] S_state;
+    reg [319:0] S_serial_label;
+    reg [5:0] S_title_byte;
     wire [3469:0] S_desired={I_alert,I_alert_length,I_alert_text,I_view,I_titles,I_title_lengths,I_mem_grant,I_mem_busy,I_index,I_count,I_audio_und,I_video_und,I_fps,
         I_mem_valid,I_fps_valid,I_hud,I_ui};
-    reg [3469:0] S_snapshot,S_applied;
+    wire [3469:0] S_snapshot;
     reg S_applied_valid;
+    wire S_start=EXTERNAL_SNAPSHOT!=0 ? I_snapshot_valid :
+        (!S_applied_valid || S_desired!=S_snapshot);
+    generate if(EXTERNAL_SNAPSHOT!=0) begin: g_external
+        // The mailbox owns this payload until O_snapshot_done acknowledges it.
+        assign S_snapshot=S_desired;
+    end else begin: g_internal
+        reg [3469:0] S_saved;
+        assign S_snapshot=S_saved;
+        always @(posedge I_clk or posedge I_reset) begin
+            if(I_reset) S_saved<=0;
+            else if(S_state==IDLE && S_start) S_saved<=S_desired;
+        end
+    end endgenerate
     reg [4:0] S_row;
     wire S_title_row=S_row<12;
     wire [3:0] S_ui_row=S_row[3:0]-4'd12;
     wire [22:0] S_view=S_snapshot[3142:3120];
     wire [2879:0] S_titles=S_snapshot[3119:240];
     wire [53:0] S_title_lengths=S_snapshot[239:186];
-    wire [319:0] S_label=S_row<9 ? S_titles[S_row*320+:320] : 320'd0;
-    wire [5:0] S_label_length=S_row<9 ? S_title_lengths[S_row*6+:6] : 6'd0;
+    reg [319:0] S_label;
+    reg [5:0] S_label_length;
+    // Explicit word selection avoids a bit-addressed 2880-bit barrel shifter.
+    always @* begin
+        S_label=0; S_label_length=0;
+        case(S_row)
+            0:begin S_label=S_titles[0+:320]; S_label_length=S_title_lengths[0+:6]; end
+            1:begin S_label=S_titles[320+:320]; S_label_length=S_title_lengths[6+:6]; end
+            2:begin S_label=S_titles[640+:320]; S_label_length=S_title_lengths[12+:6]; end
+            3:begin S_label=S_titles[960+:320]; S_label_length=S_title_lengths[18+:6]; end
+            4:begin S_label=S_titles[1280+:320]; S_label_length=S_title_lengths[24+:6]; end
+            5:begin S_label=S_titles[1600+:320]; S_label_length=S_title_lengths[30+:6]; end
+            6:begin S_label=S_titles[1920+:320]; S_label_length=S_title_lengths[36+:6]; end
+            7:begin S_label=S_titles[2240+:320]; S_label_length=S_title_lengths[42+:6]; end
+            8:begin S_label=S_titles[2560+:320]; S_label_length=S_title_lengths[48+:6]; end
+            default:begin end
+        endcase
+        if(EXTERNAL_TITLES!=0) S_label=S_serial_label;
+    end
+    wire S_fetch_title=EXTERNAL_TITLES!=0 && !S_snapshot[3469] && S_row<9 &&
+        S_view[22] && !S_snapshot[7] && S_label_length!=0;
+    assign O_title_read=!I_reset && S_state==TITLE_FETCH && S_fetch_title;
+    assign O_title_line=S_row[3:0];
+    assign O_title_address=S_title_byte;
     wire [15:0] S_item_number={10'd0,S_snapshot[143:138]}+16'd1;
     reg [5:0] S_byte;
+    reg [5:0] S_skip;
     reg [319:0] S_text;
     reg [5:0] S_length;
     wire [15:0] S_flags=S_snapshot[15:0],S_menu=S_snapshot[31:16],S_value=S_snapshot[47:32];
@@ -65,17 +114,53 @@ module osd_menu_builder (
     reg [8:0] C_y;
     reg [1:0] C_color;
     reg C_layer;
+    reg S_cmd_layer,S_cmd_lock;
+    reg [3:0] S_cmd_line;
+    reg [9:0] S_cmd_x;
+    reg [8:0] S_cmd_y;
+    reg [1:0] S_cmd_color;
+    reg [5:0] S_cmd_length;
+    // ASCII formatting consumes BCD from one shared sequential converter.
+    reg [19:0] S_digits_a,S_digits_b;
+    reg [15:0] C_number_a,C_number_b;
+    wire S_number_ready,S_number_done;
+    wire [19:0] S_number_digits;
+    osd_binary_decimal u_decimal (
+        .I_clk(I_clk),.I_reset(I_reset),
+        .I_start_valid(S_state==NUMBER_A || S_state==NUMBER_B),.O_start_ready(S_number_ready),
+        .I_value(S_state==NUMBER_B ? C_number_b : C_number_a),
+        .O_done_valid(S_number_done),.I_done_ready(S_state==WAIT_A || S_state==WAIT_B),
+        .O_digits(S_number_digits));
+    always @* begin
+        C_number_a=0; C_number_b=0;
+        if(S_menu_visible && !S_root && S_ui_row==7) C_number_a=S_magnitude;
+        else case(S_ui_row)
+            2:C_number_a=S_snapshot[66:51];
+            5:begin
+                C_number_a=S_view[22] ? S_item_number : 16'd0;
+                C_number_b={9'd0,S_snapshot[137:131]};
+            end
+            6:begin
+                C_number_a=percent(S_snapshot[164:144]);
+                C_number_b=percent(S_snapshot[185:165]);
+            end
+            default:begin end
+        endcase
+    end
     function [39:0] decimal;
-        input [15:0] value;
+        input [19:0] digits;
         integer i;
-        reg [15:0] rest;
         begin
-            rest=value;
-            for(i=0;i<5;i=i+1) begin decimal[i*8+:8]=8'd48+rest%10; rest=rest/10; end
+            for(i=0;i<5;i=i+1) decimal[i*8+:8]=8'd48+{4'd0,digits[i*4+:4]};
         end
     endfunction
-    wire [5:0] S_alert_first_length=clipped_length(S_snapshot[3462:3143],S_snapshot[3468:3463],6'd32);
-    wire [319:0] S_alert_tail=S_snapshot[3462:3143] << (S_alert_first_length*8);
+    // One byte per cycle instead of unrolling three forty-byte clipping chains.
+    reg [5:0] S_clip_index,S_clip_used,S_clip_length;
+    reg [5:0] S_clip_limit,S_clip_cells;
+    reg S_clip_pending;
+    wire S_clip_alert=S_snapshot[3469];
+    wire [7:0] S_clip_value=S_text[319:312];
+    wire [5:0] S_byte_offset=S_clip_alert && !S_title_row && S_ui_row==2 ? S_clip_length : 6'd0;
     function [63:0] hex32;
         input [31:0] value;
         integer i;
@@ -85,42 +170,15 @@ module osd_menu_builder (
         end
     endfunction
     function [15:0] decimal2;
-        input [15:0] value;
-        reg [7:0] tens,units;
+        input [19:0] digits;
         begin
-            tens=8'd48+(value/16'd10)%16'd10; units=8'd48+value%16'd10;
-            decimal2={tens,units};
+            decimal2={8'd48+{4'd0,digits[7:4]},8'd48+{4'd0,digits[3:0]}};
         end
     endfunction
     function [23:0] decimal3;
-        input [15:0] value;
-        reg [7:0] hundreds,tens,units;
+        input [19:0] digits;
         begin
-            hundreds=8'd48+(value/16'd100)%16'd10;
-            tens=8'd48+(value/16'd10)%16'd10; units=8'd48+value%16'd10;
-            decimal3={hundreds,tens,units};
-        end
-    endfunction
-    // Count display cells, never truncate between a GB2312 lead and trail byte.
-    function [5:0] clipped_length;
-        input [319:0] text;
-        input [5:0] length,cells;
-        integer i;
-        reg [5:0] used,bytes;
-        reg pending,stopped;
-        reg [7:0] value;
-        begin
-            used=0; bytes=0; pending=0; stopped=0;
-            for(i=0;i<40;i=i+1) begin
-                value=text >> ((39-i)*8);
-                if(i<length && !stopped) begin
-                    if(pending) begin bytes=i+1; used=used+1'b1; pending=0; end
-                    else if(used>=cells) stopped=1;
-                    else if(value>=8'ha1 && value<=8'hfe) pending=1;
-                    else begin bytes=i+1; used=used+1'b1; end
-                end
-            end
-            clipped_length=bytes;
+            decimal3={8'd48+{4'd0,digits[11:8]},8'd48+{4'd0,digits[7:4]},8'd48+{4'd0,digits[3:0]}};
         end
     endfunction
     function [15:0] percent;
@@ -138,20 +196,28 @@ module osd_menu_builder (
             if(!S_title_row && S_ui_row==0) begin C_text={40'h414c455254,280'd0}; C_length=5; C_y=184; C_color=3; end
             else if(!S_title_row && S_ui_row==1) begin
                 C_text=S_snapshot[3462:3143];
-                C_length=S_alert_first_length;
+                C_length=S_clip_length;
             end else if(!S_title_row && S_ui_row==2) begin
-                C_text=S_alert_tail; C_y=256;
-                C_length=S_snapshot[3468:3463]-S_alert_first_length;
+                C_text=S_snapshot[3462:3143]; C_y=256;
+                C_length=S_snapshot[3468:3463]-S_clip_length;
             end
         end else if(S_title_row) begin
             C_x=8; C_y=456; C_layer=0; C_text=S_label; C_length=0;
             if(S_view[22] && !S_flags[7] && S_row<9 && S_label_length!=0) begin
                 if(S_view[21:19]==4) begin
-                    C_x=(S_row%3)*10'd213+10'd2;
-                    C_y=(S_row/3)*9'd160+9'd144;
-                    C_length=clipped_length(S_label,S_label_length,6'd13);
+                    case(S_row)
+                        0,3,6:C_x=2;
+                        1,4,7:C_x=215;
+                        default:C_x=428;
+                    endcase
+                    case(S_row)
+                        0,1,2:C_y=144;
+                        3,4,5:C_y=304;
+                        default:C_y=464;
+                    endcase
+                    C_length=S_clip_length;
                     if({1'b0,S_view[12:7]}=={1'b0,S_view[18:13]}+S_row) C_color=1;
-                end else if(S_row==0) C_length=clipped_length(S_label,S_label_length,6'd39);
+                end else if(S_row==0) C_length=S_clip_length;
             end
         end else if(S_menu_visible) begin
             if(S_root) begin
@@ -227,7 +293,7 @@ module osd_menu_builder (
                     if(S_menu[15:12]!=0) begin C_text=320'hb2bbbfc9d3c3bbf2c3a6000000000000000000000000000000000000000000000000000000000000; C_length=6'd10; end
                     else if(S_menu[7]) begin C_text=320'hb0b4bcfc33c8b7c8cfbbd6b8b4c4acc8cf0000000000000000000000000000000000000000000000; C_length=6'd17; end
                     else if(S_menu[11:8]<15) begin
-                        C_text={ 56'hb5b1c7b0d6b520,S_number[15] ? 8'd45 : 8'd43,decimal(S_magnitude),216'd0 }; C_length=13;
+                        C_text={ 56'hb5b1c7b0d6b520,S_number[15] ? 8'd45 : 8'd43,decimal(S_digits_a),216'd0 }; C_length=13;
                     end
                 end else if(S_ui_row==8) begin C_text=320'hb0b4bcfc34b7b5bbd800000000000000000000000000000000000000000000000000000000000000; C_length=6'd9; end
             end
@@ -242,14 +308,14 @@ module osd_menu_builder (
             end else if(S_snapshot[48]) begin
                 C_x=424;
                 case(S_ui_row)
-                    2:begin C_text={32'h46505320,S_snapshot[49] ? decimal(S_snapshot[66:51]) : 40'h3f3f3f3f3f,248'd0}; C_length=9; end
+                    2:begin C_text={32'h46505320,S_snapshot[49] ? decimal(S_digits_a) : 40'h3f3f3f3f3f,248'd0}; C_length=9; end
                     3:begin C_text={72'hcad3c6b5c7b7d4d820,hex32(S_snapshot[98:67]),184'd0}; C_length=17; end
                     4:begin C_text={72'hd2f4c6b5c7b7d4d820,hex32(S_snapshot[130:99]),184'd0}; C_length=17; end
-                    5:begin C_text={40'h4954454d20,decimal2(S_view[22] ? S_item_number : 16'd0),8'h2f,
-                        decimal2({9'd0,S_snapshot[137:131]}),240'd0}; C_length=10; end
+                    5:begin C_text={40'h4954454d20,decimal2(S_digits_a),8'h2f,
+                        decimal2(S_digits_b),240'd0}; C_length=10; end
                     6:begin
-                        if(S_snapshot[50]) begin C_text={24'h425720,decimal3(percent(S_snapshot[164:144])),8'h25,16'h2047,
-                            decimal3(percent(S_snapshot[185:165])),8'h25,216'd0}; C_length=13; end
+                        if(S_snapshot[50]) begin C_text={24'h425720,decimal3(S_digits_a),8'h25,16'h2047,
+                            decimal3(S_digits_b),8'h25,216'd0}; C_length=13; end
                         else begin C_text=320'h425720554e4b4e4f574e0000000000000000000000000000000000000000000000000000000000; C_length=10; end
                     end
                     7:begin C_text=320'hd7cad4b420554e4b4e4f574e00000000000000000000000000000000000000000000000000000000; C_length=6'd12; end
@@ -259,37 +325,93 @@ module osd_menu_builder (
         end
     end
     assign O_idle=S_state==IDLE;
+    assign O_snapshot_done=EXTERNAL_SNAPSHOT!=0 && S_state==RESULT && I_done_valid && !I_reset;
     assign O_begin_valid=!I_reset && S_state==BEGIN_FRAME;
-    assign O_line_valid=!I_reset && S_state==LINE_CMD && C_length!=0;
-    assign O_layer=C_layer;
-    assign O_line=S_title_row ? S_row[3:0] : S_ui_row;
-    assign O_x=C_x;
-    assign O_y=C_y;
-    assign O_color=C_color;
-    assign O_lock=!S_title_row && !(S_snapshot[3469] && (S_ui_row==1 || S_ui_row==2));
-    assign O_length=C_length;
+    assign O_line_valid=!I_reset && S_state==LINE_CMD && S_cmd_length!=0;
+    assign O_layer=S_cmd_layer;
+    assign O_line=S_cmd_line;
+    assign O_x=S_cmd_x;
+    assign O_y=S_cmd_y;
+    assign O_color=S_cmd_color;
+    assign O_lock=S_cmd_lock;
+    assign O_length=S_cmd_length;
     assign O_byte_valid=!I_reset && S_state==BYTES;
-    assign O_byte_data=S_text >> ((39-S_byte)*8);
+    assign O_byte_data=S_text[319:312];
     assign O_byte_last=S_byte+6'd1==S_length;
     assign O_finish_valid=!I_reset && S_state==FINISH;
     assign O_done_ready=!I_reset && S_state==RESULT;
     task next_line;
         begin
             if(S_row==23) S_state<=FINISH;
-            else begin S_row<=S_row+1'b1; S_state<=LINE_CMD; end
+            else begin
+                S_row<=S_row+1'b1; S_serial_label<=0; S_title_byte<=0;
+                S_state<=EXTERNAL_TITLES!=0 ? TITLE_FETCH : CLIP_START;
+            end
         end
     endtask
     always @(posedge I_clk or posedge I_reset) begin
         if(I_reset) begin
-            S_state<=IDLE; S_snapshot<=0; S_applied<=0; S_applied_valid<=0; S_row<=0; S_byte<=0; S_text<=0; S_length<=0; O_error<=0;
+            S_state<=IDLE; S_applied_valid<=0; S_row<=0; S_byte<=0; S_skip<=0; S_text<=0; S_length<=0;
+            S_digits_a<=0; S_digits_b<=0; O_error<=0;
+            S_clip_index<=0; S_clip_used<=0; S_clip_length<=0; S_clip_pending<=0;
+            S_clip_limit<=0; S_clip_cells<=0;
+            S_cmd_layer<=0; S_cmd_lock<=0; S_cmd_line<=0; S_cmd_x<=0;
+            S_cmd_y<=0; S_cmd_color<=0; S_cmd_length<=0;
+            S_serial_label<=0; S_title_byte<=0;
         end else case(S_state)
-            IDLE:if(!S_applied_valid || S_desired!=S_applied) begin S_snapshot<=S_desired; S_row<=0; S_state<=BEGIN_FRAME; end
-            BEGIN_FRAME:if(I_begin_ready) S_state<=LINE_CMD;
+            IDLE:if(S_start) begin S_row<=0; S_serial_label<=0; S_title_byte<=0; S_state<=BEGIN_FRAME; end
+            BEGIN_FRAME:if(I_begin_ready) S_state<=EXTERNAL_TITLES!=0 ? TITLE_FETCH : CLIP_START;
+            TITLE_FETCH:S_state<=S_fetch_title ? TITLE_WAIT : CLIP_START;
+            TITLE_WAIT:begin
+                S_serial_label<={S_serial_label[311:0],I_title_data};
+                if(S_title_byte==39) S_state<=CLIP_START;
+                else begin S_title_byte<=S_title_byte+6'd1; S_state<=TITLE_FETCH; end
+            end
+            CLIP_START:begin
+                S_clip_index<=0; S_clip_used<=0; S_clip_length<=0; S_clip_pending<=0;
+                S_text<=C_text;
+                S_clip_limit<=S_clip_alert ? S_snapshot[3468:3463] : S_label_length;
+                S_clip_cells<=S_clip_alert ? 6'd32 : (S_view[21:19]==4 ? 6'd13 : 6'd39);
+                if((S_clip_alert && !S_title_row && (S_ui_row==1 || S_ui_row==2)) ||
+                    (!S_clip_alert && S_title_row && S_row<9 && S_view[22] && !S_flags[7]))
+                    S_state<=CLIP_SCAN;
+                else S_state<=NUMBER_A;
+            end
+            CLIP_SCAN:begin
+                if(S_clip_index>=S_clip_limit || S_clip_index==40 ||
+                    (!S_clip_pending && S_clip_used>=S_clip_cells)) S_state<=NUMBER_A;
+                else begin
+                    S_text<={S_text[311:0],8'd0};
+                    S_clip_index<=S_clip_index+1'b1;
+                    if(S_clip_pending) begin
+                        S_clip_length<=S_clip_index+1'b1; S_clip_used<=S_clip_used+1'b1; S_clip_pending<=0;
+                    end else if(S_clip_value>=8'ha1 && S_clip_value<=8'hfe) S_clip_pending<=1;
+                    else begin S_clip_length<=S_clip_index+1'b1; S_clip_used<=S_clip_used+1'b1; end
+                end
+            end
+            NUMBER_A:if(S_number_ready) S_state<=WAIT_A;
+            WAIT_A:if(S_number_done) begin S_digits_a<=S_number_digits; S_state<=NUMBER_B; end
+            NUMBER_B:if(S_number_ready) S_state<=WAIT_B;
+            WAIT_B:if(S_number_done) begin
+                S_digits_b<=S_number_digits; S_state<=LINE_CMD;
+                S_cmd_layer<=C_layer; S_cmd_line<=S_title_row ? S_row[3:0] : S_ui_row;
+                S_cmd_x<=C_x; S_cmd_y<=C_y; S_cmd_color<=C_color; S_cmd_length<=C_length;
+                S_cmd_lock<=!S_title_row && !(S_snapshot[3469] && (S_ui_row==1 || S_ui_row==2));
+            end
             LINE_CMD:if(I_done_valid) begin O_error<=I_error; S_state<=RESULT; end
-                else if(C_length==0) next_line;
-                else if(I_line_ready) begin S_text<=C_text; S_length<=C_length; S_byte<=0; S_state<=BYTES; end
+                else if(S_cmd_length==0) next_line;
+                else if(I_line_ready) begin
+                    S_text<=C_text; S_length<=S_cmd_length; S_byte<=0; S_skip<=S_byte_offset;
+                    S_state<=S_byte_offset==0 ? BYTES : SKIP_BYTES;
+                end
+            SKIP_BYTES:if(I_done_valid) begin O_error<=I_error; S_state<=RESULT; end
+                else begin
+                    S_text<={S_text[311:0],8'd0}; S_skip<=S_skip-1'b1;
+                    if(S_skip==1) S_state<=BYTES;
+                end
             BYTES:if(I_done_valid) begin O_error<=I_error; S_state<=RESULT; end
                 else if(I_byte_ready) begin
+                    S_text<={S_text[311:0],8'd0};
                     if(S_byte+6'd1==S_length) S_state<=LINE_WAIT;
                     else S_byte<=S_byte+1'b1;
                 end
@@ -297,8 +419,45 @@ module osd_menu_builder (
                 else if(I_line_ready) next_line;
             FINISH:if(I_done_valid) begin O_error<=I_error; S_state<=RESULT; end
                 else if(I_finish_ready) S_state<=RESULT;
-            RESULT:if(I_done_valid) begin O_error<=I_error; S_applied<=S_snapshot; S_applied_valid<=1; S_state<=IDLE; end
+            RESULT:if(I_done_valid) begin O_error<=I_error; S_applied_valid<=1; S_state<=IDLE; end
             default:S_state<=IDLE;
         endcase
+    end
+endmodule
+
+// Unsigned 16-bit binary -> five packed BCD digits, one input bit per cycle.
+module osd_binary_decimal (
+    input wire I_clk,I_reset,I_start_valid,
+    output wire O_start_ready,
+    input wire [15:0] I_value,
+    output reg O_done_valid,
+    input wire I_done_ready,
+    output reg [19:0] O_digits
+);
+    reg S_busy;
+    reg [3:0] S_bit;
+    reg [15:0] S_binary;
+    reg [19:0] S_digits;
+    reg [19:0] C_adjust;
+    wire [19:0] S_next={C_adjust[18:0],S_binary[15]};
+    integer i;
+    assign O_start_ready=!I_reset && !S_busy && !O_done_valid;
+    always @* begin
+        C_adjust=S_digits;
+        for(i=0;i<5;i=i+1)
+            if(S_digits[i*4+:4]>=5) C_adjust[i*4+:4]=S_digits[i*4+:4]+4'd3;
+    end
+    always @(posedge I_clk or posedge I_reset) begin
+        if(I_reset) begin
+            S_busy<=0; S_bit<=0; S_binary<=0; S_digits<=0; O_digits<=0; O_done_valid<=0;
+        end else begin
+            if(O_done_valid && I_done_ready) O_done_valid<=0;
+            if(I_start_valid && O_start_ready) begin
+                S_busy<=1; S_bit<=0; S_binary<=I_value; S_digits<=0;
+            end else if(S_busy) begin
+                S_digits<=S_next; S_binary<={S_binary[14:0],1'b0}; S_bit<=S_bit+1'b1;
+                if(S_bit==15) begin O_digits<=S_next; O_done_valid<=1; S_busy<=0; end
+            end
+        end
     end
 endmodule

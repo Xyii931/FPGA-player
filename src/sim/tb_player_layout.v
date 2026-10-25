@@ -38,6 +38,10 @@ module tb_player_layout;
     wire [22:0] O_view;
     wire [2879:0] S_titles;
     wire [53:0] S_title_lengths;
+    wire [31:0] S_title_serial;
+    reg [31:0] S_previous_title_serial=0;
+    reg [2879:0] S_previous_titles=0;
+    reg [53:0] S_previous_lengths=0;
     wire S_all_failed;
     wire S_watchdog_expired;
     reg [5:0] S_item_title_length=0;
@@ -173,7 +177,7 @@ module tb_player_layout;
         .I_default_transition_ms(I_default_transition_ms),
         .I_default_transition(I_default_transition),
         .O_busy(O_busy),
-        .O_titles(S_titles),.O_title_lengths(S_title_lengths),.O_view(O_view),
+        .O_titles(S_titles),.O_title_lengths(S_title_lengths),.O_title_serial(S_title_serial),.O_view(O_view),
         .O_active_valid(O_active_valid),
         .O_all_failed(S_all_failed),.O_watchdog_expired(S_watchdog_expired),.O_fault(O_fault),
         .O_changed(O_changed),
@@ -324,6 +328,8 @@ module tb_player_layout;
     endtask
     always @(posedge I_clk) begin
         if(!I_reset) begin
+            if(u_app.S_state==u_app.PART_INDEX && !S_alert && S_alert_hold)
+                fail("ordinary part-index calculation entered the alert phase");
             S_expected_path=item_path(S_copy_index,O_item_string_kind==1);
             if(O_item_string_kind==2) begin
                 case(O_item_string_address)
@@ -354,7 +360,7 @@ module tb_player_layout;
                 S_part<=I_image_part_index; I_image_part_needed<=0; S_path_position=0;
             end
             if(O_image_path_valid && I_image_path_ready) begin
-                S_picture=S_expected_layout==4 ? (S_expected_index/9)*9+S_part : (S_expected_index+S_part)%12;
+                S_picture=S_expected_layout==4 ? (S_expected_index/9)*9+S_part : (S_expected_index+S_part)%I_item_count;
                 S_expected_path=item_path(S_picture,0);
                 if(O_image_path_data!==S_expected_path[(7-S_path_position)*8+:8] ||
                     O_image_path_last!==(S_path_position==7)) fail("wrong composed picture or path byte");
@@ -396,6 +402,18 @@ module tb_player_layout;
             end
             if(S_result_pending && !S_delay_result) begin S_result_pending<=0; I_command_done_valid<=1; end
             if(I_command_done_valid && O_command_done_ready) I_command_done_valid<=0;
+        end
+    end
+    // The copy bridge can reject a torn title copy only if the publication
+    // identity changes atomically with both the title data and its lengths.
+    always @(negedge I_clk) begin
+        if(I_reset) begin S_previous_title_serial=0; S_previous_titles=0; S_previous_lengths=0; end
+        else begin
+            if((S_titles!==S_previous_titles || S_title_lengths!==S_previous_lengths) &&
+                S_title_serial==S_previous_title_serial) fail("title data changed without a new publication serial");
+            if(S_title_serial!=S_previous_title_serial && (!O_changed || S_title_serial!=u_app.S_sequence))
+                fail("title serial was not atomic with the actual image publication");
+            S_previous_title_serial=S_title_serial; S_previous_titles=S_titles; S_previous_lengths=S_title_lengths;
         end
     end
     task completed;
@@ -481,9 +499,22 @@ module tb_player_layout;
         @(negedge I_clk); S_order_hold=1; I_next=1;
         @(negedge I_clk); I_next=0; repeat(3) @(negedge I_clk);
         S_order_index=10; S_order_revision=4; I_index_revision=4; I_item_revision=4; S_order_applied=1;
-        @(negedge I_clk); S_order_applied=0; repeat(3) @(negedge I_clk);
+        @(negedge I_clk); S_order_applied=0;
+        // Relative input arriving during serial remapping must restart from
+        // the original coordinate system; NEXT then PREV keeps the same item.
+        I_next=1; @(negedge I_clk); I_next=0; I_prev=1;
+        @(negedge I_clk); I_prev=0;
+        if(!O_busy) fail("relative reorder remapping was not held busy");
+        wait(!O_busy); repeat(3) @(negedge I_clk);
         if(O_current_index!=10 || O_view[12:7]!=4 || O_view[18:13]!=0)
             fail("new logical index corrupted labels on the old THUMB atlas");
+        // Repeat the held sort publication, then override its queued relative
+        // request with absolute GOTO. The absolute index must not be rebased.
+        S_order_revision=5; I_index_revision=5; I_item_revision=5;
+        S_order_applied=1; @(negedge I_clk); S_order_applied=0;
+        I_goto_index=11; I_goto_valid=1; @(negedge I_clk); I_goto_valid=0;
+        repeat(3) @(negedge I_clk);
+        if(O_busy || O_current_index!=10) fail("absolute GOTO did not retire pending remapping");
         S_expected_index=11; S_order_hold=0; completed(11);
         if(O_view[18:13]!=9 || O_view[12:7]!=11) fail("queued relative navigation or multi-layout redraw after sort");
         go(8,0); completed(12);
@@ -524,6 +555,9 @@ module tb_player_layout;
         if(S_alert_visible || O_fault || O_current_index!=3 || S_images!=S_before_images ||
             S_fetches!=S_before_fetches || S_opens!=S_before_opens+1 || !O_view[22])
             fail("alert did not restore the selected frame and reopen its saved track exactly once");
+        // A single-item QUAD repeats the same image through all four real part
+        // requests; this covers count=1 and the longest small-index wrap case.
+        I_pause=0; I_item_count=1; go(0,3); completed(17);
         // A no-card alert still uses the resident transaction; expiry abandons stale bookmarks.
         I_media_valid=0; I_session_ready=0; S_alert=1; wait(S_alert_visible);
         S_alert=0; wait(!S_alert_hold); repeat(8) @(negedge I_clk);

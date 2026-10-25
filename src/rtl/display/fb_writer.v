@@ -159,7 +159,9 @@ module fb_writer #(
         S_buffer_free && S_room && !O_tag_exhausted;
     assign O_source_ready=!I_reset && S_state!=IDLE;
     assign O_mem_done_ready=!I_reset;
-    assign O_cancel_source=S_active && S_source_expected && !S_source_seen && (S_stop || S_cycle_error!=0);
+    // Local faults first latch into O_error. Feeding S_cycle_error directly to
+    // upstream abort can suppress the very pixel handshake that raised the fault.
+    assign O_cancel_source=S_active && S_source_expected && !S_source_seen && S_stop;
     assign O_mem_valid=S_cmd_valid && !I_reset;
     assign O_mem_wr=1'b1;
     assign O_mem_mask=4'b0000;

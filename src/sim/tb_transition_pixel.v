@@ -1,6 +1,8 @@
 `timescale 1ns/1ps
 // Golden arithmetic exists only in this unexecuted Verilog self-check.
 module tb_transition_pixel;
+    // Shared endpoint declarations precede all instance/assign uses.
+    reg S_hold_plan=0;
     reg S_clk=0,S_reset=0,S_test_pass=0;
     integer S_case=0;
     always #20 S_clk=~S_clk;
@@ -193,7 +195,6 @@ module tb_transition_pixel;
     integer S_issued=0,S_map_checked=0,S_blend_checked=0;
     reg [31:0] S_epoch=0;
     reg [15:0] S_tag=0;
-    reg S_hold_plan=0;
     reg S_prev_valid=0;
     reg [141:0] S_prev_map=0,S_current_map;
     reg [109:0] S_expected_blend[0:2];

@@ -44,6 +44,7 @@ module player_autoplay (
     output wire [22:0] O_player_view,
     output wire [2879:0] O_player_titles,
     output wire [53:0] O_player_title_lengths,
+    output wire [31:0] O_player_title_serial,
     output wire O_player_all_failed,
     output wire O_player_watchdog_expired,
     output wire O_player_alert_visible,
@@ -1108,6 +1109,7 @@ module player_autoplay (
     wire [22:0] S_app_O_view;
     wire [2879:0] S_app_O_titles;
     wire [53:0] S_app_O_title_lengths;
+    wire [31:0] S_app_O_title_serial;
     wire S_app_O_active_valid;
     wire S_app_O_fault;
     wire S_app_O_changed;
@@ -1927,6 +1929,7 @@ module player_autoplay (
         .O_view(S_app_O_view),
         .O_titles(S_app_O_titles),
         .O_title_lengths(S_app_O_title_lengths),
+        .O_title_serial(S_app_O_title_serial),
         .O_active_valid(S_app_O_active_valid),
         .O_fault(S_app_O_fault),
         .O_changed(S_app_O_changed),
@@ -2140,6 +2143,7 @@ module player_autoplay (
     assign O_player_view=S_app_O_view;
     assign O_player_titles=S_app_O_titles;
     assign O_player_title_lengths=S_app_O_title_lengths;
+    assign O_player_title_serial=S_app_O_title_serial;
     assign O_player_all_failed=S_app_O_all_failed;
     assign O_player_watchdog_expired=S_app_O_watchdog_expired;
     assign O_player_alert_visible=S_app_O_alert_visible;

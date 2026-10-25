@@ -1,15 +1,24 @@
 `timescale 1ns/1ps
 module tb_async_fifo;
-    wire [3:0] S_done;
+    wire [9:0] S_done;
     reg S_test_pass=0;
     async_fifo_case #(2,3,13) u_min(S_done[0]);
     async_fifo_case #(4,13,3) u_fast_reader(S_done[1]);
     async_fifo_case #(4,5,5) u_equal_clocks(S_done[2]);
     async_fifo_case #(11,4,20) u_audio_depth(S_done[3]);
+    // Retain all inferred cases and independently score the explicit 32K path.
+    // The full-depth case matches one production stereo payload FIFO exactly.
+    async_fifo_case #(2,3,13,48,1) u_bram_min(S_done[4]);
+    async_fifo_case #(4,13,3,48,1) u_bram_fast_reader(S_done[5]);
+    async_fifo_case #(4,5,5,48,1) u_bram_equal_clocks(S_done[6]);
+    async_fifo_case #(11,4,20,48,1) u_bram_audio_depth(S_done[7]);
+    // Production control payload widths: 375-bit requests and 434-bit results.
+    async_fifo_case #(2,4,20,375,0) u_control_request(S_done[8]);
+    async_fifo_case #(2,20,4,434,0) u_control_result(S_done[9]);
     initial begin
         wait (&S_done);
         S_test_pass=1;
-        $display("PASS: async FIFO order, capacity, wrap, CDC rates, stalls and stopped-clock flush");
+        $display("PASS: inferred/32K async FIFO order, capacity, wrap, CDC rates, stalls and stopped-clock flush");
         $finish;
     end
     initial begin
@@ -19,21 +28,22 @@ module tb_async_fifo;
 endmodule
 
 module async_fifo_case #(
-    parameter integer ADDR=4, WRITE_HALF=4, READ_HALF=20
+    parameter integer ADDR=4, WRITE_HALF=4, READ_HALF=20,
+    parameter integer DATA_BITS=32, USE_BRAM32K=0
 ) (output reg O_done);
     localparam integer DEPTH=2**ADDR;
     reg S_write_clk=0,S_read_clk=0,S_run_read=1,S_run_write=1,S_reset=0;
     reg S_write_valid=0,S_read_ready=0;
-    reg [31:0] S_write_data=0;
+    reg [DATA_BITS-1:0] S_write_data=0;
     wire S_write_ready,S_read_valid,S_full,S_empty;
-    wire [31:0] S_read_data;
+    wire [DATA_BITS-1:0] S_read_data;
     wire [ADDR:0] S_write_level,S_read_level;
-    reg [31:0] S_expected[0:DEPTH-1];
+    reg [DATA_BITS-1:0] S_expected[0:DEPTH-1];
     integer S_head=0,S_tail=0,S_sent=0,S_received=0;
     integer S_phase=0,S_wcycle=0,S_rcycle=0,S_epoch=0;
     integer S_saved_tail,S_saved_head,S_c;
     reg S_input_taken=0,S_output_stalled=0;
-    reg [31:0] S_held_data;
+    reg [DATA_BITS-1:0] S_held_data;
     reg [15:0] S_wrng=16'hbabe,S_rrng=16'h1234;
     always #(WRITE_HALF) if (S_run_write) S_write_clk=~S_write_clk;
     // Nonzero initial phase also exercises unrelated clock-edge alignment.
@@ -41,12 +51,21 @@ module async_fifo_case #(
         #1;
         forever begin #(READ_HALF); if (S_run_read) S_read_clk=~S_read_clk; end
     end
-    async_fifo #(.DATA_BITS(32),.ADDR_BITS(ADDR)) u_dut (
+    async_fifo #(.DATA_BITS(DATA_BITS),.ADDR_BITS(ADDR),.USE_BRAM32K(USE_BRAM32K)) u_dut (
         .I_write_clk(S_write_clk),.I_read_clk(S_read_clk),.I_async_reset(S_reset),
         .I_write_valid(S_write_valid),.O_write_ready(S_write_ready),.I_write_data(S_write_data),
         .O_write_full(S_full),.O_write_level(S_write_level),
         .O_read_valid(S_read_valid),.I_read_ready(S_read_ready),.O_read_data(S_read_data),
         .O_read_empty(S_empty),.O_read_level(S_read_level));
+    function [DATA_BITS-1:0] payload;
+        input integer index,epoch;
+        integer lane;
+        begin
+            // Cover non-byte-aligned high bits as well as all complete bytes.
+            for (lane=0;lane<DATA_BITS;lane=lane+1)
+                payload[lane]=((index*(73+2*(lane/8))+(index/256)*29+epoch*37+(lane/8)*53) >> (lane%8)) & 1;
+        end
+    endfunction
     always @(posedge S_reset) begin
         S_head=0; S_tail=0; S_sent=0; S_received=0;
     end
@@ -92,7 +111,7 @@ module async_fifo_case #(
             // Once valid is raised, retain it and its payload until accepted/reset.
             if (!S_write_valid || S_input_taken) begin
                 S_write_valid=(S_phase==1 || S_phase==2) && (S_phase==1 || S_wrng[0]);
-                S_write_data=(32'h9e3779b9*S_sent) ^ (32'hda7a0000+S_epoch);
+                S_write_data=payload(S_sent,S_epoch);
             end
         end
     end
@@ -125,6 +144,9 @@ module async_fifo_case #(
     endtask
     initial begin
         O_done=0;
+        // Native mode has an independent global startup model. Initialize RAM
+        // only through real writes after it releases, never through RAM reset.
+        #100;
         #1; S_reset=1;
         #1;
         if (S_write_ready || S_read_valid) begin $display("FAIL in %m: reset interfaces"); $stop; end
