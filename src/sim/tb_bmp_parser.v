@@ -20,7 +20,7 @@ module tb_bmp_parser;
     reg [3:0] S_expected_error = 0;
     reg S_test_pass = 0;
     reg [15:0] S_rng = 16'hbeef;
-    integer S_ticks = 0;
+    integer S_ticks = 0, S_stage;
     reg S_meta_wait = 0, S_pixel_wait = 0;
     reg S_force_pixel_stall = 0;
     reg [102:0] S_saved_meta;
@@ -212,6 +212,15 @@ module tb_bmp_parser;
         @(negedge S_clk); S_abort=1;
         @(negedge S_clk); S_abort=0;
         finish_job(0);
+        // Cancel in every new header arithmetic stage; scratch must not leak
+        // into a subsequent job and no metadata/pixel may escape cancellation.
+        for (S_stage=9; S_stage<=13; S_stage=S_stage+1) begin
+            build_file(2,2,24,1,0,0); start_job(6); send_bytes(54,-1);
+            wait (u_dut.S_state==S_stage);
+            @(negedge S_clk); S_abort=1;
+            @(negedge S_clk); S_abort=0;
+            finish_job(0);
+        end
         // Explicit upstream read error, then reusable after terminal.
         build_file(2,2,32,1,0,0); start_job(5); send_bytes(56,-1);
         @(negedge S_clk); S_stream_err=1;

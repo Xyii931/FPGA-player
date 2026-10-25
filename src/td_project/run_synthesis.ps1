@@ -1,13 +1,13 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
-    [ValidateSet('p0_hdmi', 'player')]
-    [string]$Project = 'p0_hdmi',
-    [ValidateSet('osd_menu_builder', 'player_osd', 'player_ui_ctrl', 'display_event_executor', 'fb_line_reader', 'fb_slot_arbiter', 'playlist_player_ctrl', 'media_index_store', 'display_candidate_ctrl', 'image_scaler', 'audio_frame_fifo', 'wav_audio_prepared', 'demo_sector_source')]
+    [ValidateSet('p0_hdmi', 'lean_player')]
+    [string]$Project = 'lean_player',
+    [ValidateSet('lean_media_source', 'audio_frame_fifo')]
     [string]$Module,
     [string]$TdPath = 'D:/Anlogic/TD_6.2.1_Engineer_6.2.168.116/bin/td_commands_prompt.exe'
 )
 $ErrorActionPreference = 'Stop'
-if ($Module -and $Project -ne 'player') { throw '-Module requires -Project player.' }
+if ($Module -and $Project -ne 'lean_player') { throw '-Module requires -Project lean_player.' }
 if (-not (Test-Path -LiteralPath $TdPath -PathType Leaf)) {
     throw "TD command-line executable not found: $TdPath. Set -TdPath."
 }

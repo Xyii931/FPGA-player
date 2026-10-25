@@ -28,17 +28,20 @@ module bmp_parser (
     output reg O_pixel_last
 );
     localparam [3:0] ST_IDLE=0, ST_HEADER=1, ST_CHECK=2, ST_META=3,
-        ST_SKIP=4, ST_PIXELS=5, ST_TAIL=6, ST_DRAIN=7, ST_FINISH=8;
+        ST_SKIP=4, ST_PIXELS=5, ST_TAIL=6, ST_DRAIN=7, ST_FINISH=8,
+        ST_GEOMETRY=9, ST_STRIDE=10, ST_AREA=11, ST_END=12, ST_LENGTH=13;
     reg [3:0] S_state;
     reg [7:0] S_header [0:53];
     reg [31:0] S_file_size, S_pos, S_row_pos;
     reg [15:0] S_x, S_row;
     reg [1:0] S_component;
     reg [7:0] S_blue, S_green, S_red;
-    wire [31:0] S_width_raw, S_height_raw, S_height_abs;
+    wire [31:0] S_width_raw, S_height_raw;
+    reg [31:0] S_height_abs;
     wire [15:0] S_bpp_raw;
-    wire [63:0] S_stride, S_image_bytes, S_pixel_end;
-    wire [23:0] S_bounded_image_bytes;
+    reg [12:0] S_stride;
+    reg [23:0] S_image_bytes;
+    reg [32:0] S_pixel_end;
     wire [31:0] S_offset_raw;
     wire [31:0] S_row_data_bytes = O_width * ((O_bpp == 24) ? 32'd3 : 32'd4);
     function [31:0] header_u32;
@@ -50,18 +53,24 @@ module bmp_parser (
     endfunction
     assign S_width_raw = {S_header[21],S_header[20],S_header[19],S_header[18]};
     assign S_height_raw = {S_header[25],S_header[24],S_header[23],S_header[22]};
-    assign S_height_abs = S_height_raw[31] ? (~S_height_raw + 32'd1) : S_height_raw;
     assign S_bpp_raw = {S_header[29], S_header[28]};
     // Expose memory reads in the expression so simulators track header changes.
     assign S_offset_raw = {S_header[13],S_header[12],S_header[11],S_header[10]};
-    // Geometry is rejected before these bounded results can be accepted.
+    // Geometry scratch is overwritten on every job before use, without reset.
+    // Separate stride, multiply, end addition and validation into clock cycles.
     // Legal stride <= 7680 (13 bits), height <= 1080 (11 bits).
-    assign S_stride = (S_bpp_raw == 24) ?
-        (((({53'd0,S_width_raw[10:0]} << 1) + {53'd0,S_width_raw[10:0]} + 64'd3) >> 2) << 2) :
-        ({53'd0,S_width_raw[10:0]} << 2);
-    assign S_bounded_image_bytes = S_stride[12:0] * S_height_abs[10:0];
-    assign S_image_bytes = {40'd0,S_bounded_image_bytes};
-    assign S_pixel_end = {32'd0,S_offset_raw} + S_image_bytes;
+    always @(posedge I_clk) begin
+        if (S_state == ST_CHECK)
+            S_height_abs <= S_height_raw[31] ? (~S_height_raw + 32'd1) : S_height_raw;
+        if (S_state == ST_STRIDE)
+            S_stride <= (O_bpp == 24) ?
+                (((({2'd0,O_width[10:0]} << 1) + {2'd0,O_width[10:0]} + 13'd3) >> 2) << 2) :
+                ({2'd0,O_width[10:0]} << 2);
+        if (S_state == ST_AREA)
+            S_image_bytes <= S_stride * O_height[10:0];
+        if (S_state == ST_END)
+            S_pixel_end <= {1'b0,O_pixel_offset} + {9'd0,S_image_bytes};
+    end
     assign O_start_ready = S_state == ST_IDLE;
     assign O_busy = S_state != ST_IDLE;
     assign O_header_valid = S_state == ST_META && !I_abort && !I_stream_error;
@@ -105,19 +114,31 @@ module bmp_parser (
                         end else if ({S_header[27],S_header[26]} != 1 ||
                             (S_bpp_raw != 24 && S_bpp_raw != 32) || header_u32(30) != 0) begin
                             O_error_code <= 4'd2; S_state <= ST_FINISH;
-                        end else if (S_width_raw < 1 || S_width_raw > 1920 ||
+                        end else S_state <= ST_GEOMETRY;
+                    end
+                    ST_GEOMETRY: begin
+                        if (S_width_raw < 1 || S_width_raw > 1920 ||
                             S_height_abs < 1 || S_height_abs > 1080) begin
                             O_error_code <= 4'd3; S_state <= ST_FINISH;
-                        end else if (header_u32(2) != S_file_size || S_offset_raw < 54 ||
-                            S_pixel_end > {32'd0,S_file_size} ||
-                            (header_u32(34) != 0 && {32'd0,header_u32(34)} != S_image_bytes)) begin
-                            O_error_code <= 4'd4; S_state <= ST_FINISH;
                         end else begin
                             O_width <= S_width_raw[15:0]; O_height <= S_height_abs[15:0];
                             O_bottom_up <= !S_height_raw[31]; O_bpp <= S_bpp_raw[5:0];
-                            O_pixel_offset <= S_offset_raw; O_row_bytes <= S_stride[31:0];
-                            S_state <= ST_META;
+                            O_pixel_offset <= S_offset_raw;
+                            S_state <= ST_STRIDE;
                         end
+                    end
+                    ST_STRIDE: S_state <= ST_AREA;
+                    ST_AREA: begin
+                        O_row_bytes <= {19'd0,S_stride};
+                        S_state <= ST_END;
+                    end
+                    ST_END: S_state <= ST_LENGTH;
+                    ST_LENGTH: begin
+                        if (header_u32(2) != S_file_size || O_pixel_offset < 54 ||
+                            S_pixel_end > {1'b0,S_file_size} ||
+                            (header_u32(34) != 0 && header_u32(34) != {8'd0,S_image_bytes})) begin
+                            O_error_code <= 4'd4; S_state <= ST_FINISH;
+                        end else S_state <= ST_META;
                     end
                     ST_META: if (I_header_ready)
                         S_state <= S_pos == O_pixel_offset ? ST_PIXELS : ST_SKIP;

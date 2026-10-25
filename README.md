@@ -1,52 +1,67 @@
-# FPGA-player
+# FPGA-player：TF卡 HDMI 图像与音频播放器
 
-基于安路 HX4S20 系列开发板的 HDMI 图片与音频播放器，目标器件为 `EG4S20BG256`。项目使用 Verilog-2001，通过 TF 卡读取素材，在片内集成 SDRAM 中保存画面，经 HDMI 输出视频和音频，并提供板载菜单、UART 控制和 Flash 设置保存。
+FPGA-player 是基于安路 HX4S20 开发板（EG4S20BG256）的硬件播放器。它从 FAT32 格式的 TF 卡读取图片和背景音乐，通过 HDMI 同时输出画面与声音，适用于电子相册和图片展示。文件读取、图片解码、旋转、帧缓存和播放控制由 Verilog-2001 RTL 实现，HDMI 发送使用厂商 IP。
 
-**当前状态：主功能源码、顶层接线、TD工程和自检脚本已编写。2026-10-25已通过P0六项、Storage十六项仿真（含修复后复测）、部分Media定向测试及基础视频工程综合；完整播放器已发现严重资源超预算，综合检查未通过，布局布线和上板尚未执行，P0—P7 尚未验收。** 结果见 [基础仿真记录](docs/record/2026-10-25-P0-基础仿真.md) 和 [TD综合检查](docs/record/2026-10-25-P0-TD综合检查.md)。基础视频工程占用1800/19600 LUT，不能据此推断完整播放器能装入器件；完整播放器本日基线最终报告为163704/19600 LUT、61545/19600寄存器、227/64 BRAM9K，容量不通过；后续模块修改尚不能替代整机复测。
+## 作品功能
 
-## 已编写的功能
-
-| 部分 | 当前源码内容 |
+| 功能 | 规格与操作 |
 |---|---|
-| 时钟与复位 | 50 MHz 输入、双 PLL、五路输出、锁定状态和分域复位 |
-| 存储与文件 | TF SPI、FAT32、共享文件服务、播放列表与目录扫描、帧存储仲裁和 SDRAM 控制 |
-| 图像与显示 | BMP/RLE1 解码、缩放与旋转、五种版式、七种转场、行缓存扫描、颜色调整 |
-| 音频 | 48 kHz 双声道 PCM16 WAV、APT0、双音轨缓冲与混音、BGM 循环、音量/静音/暂停、HDMI PCM/ACR |
-| 操作与文字 | 板载按键/拨码、中文 OSD、标题与缩略图标签、菜单、UART、CFG1 设置保存 |
-| 特殊流程 | 告警常驻页与提示音、音轨书签恢复、DEM1 Flash 演示、显式连续 BMP 扇区恢复扫描 |
+| 图片识别 | 自动扫描 FAT32 根目录，收录最多16张640×480、未压缩24/32-bit BMP |
+| 图片播放 | 按目录顺序播放；支持上一张、下一张、自动轮播，周期1—60秒 |
+| 图像旋转 | 0°、90°、180°、270°；90°/270°缩采样为360×480并水平居中 |
+| 缓存显示 | SDRAM双帧缓存、双行缓存、帧边界换图，HDMI输出640×480 |
+| 背景音乐 | 根目录首个48 kHz、双声道PCM16 WAV循环播放，支持音量和静音 |
+| 本地控制 | 四个按键执行切图、轮播、旋转及长按复位 |
+| 串口控制 | 115200、8N1，设置播放参数并查询状态 |
+| 状态显示 | 画面左上角ASCII状态、四个状态LED及串口状态快照 |
 
-表中描述源码范围，不代表功能已验证。独立开机 Logo 加载显示流程尚未实现；外接编码器、红外、720p 和频谱不属于当前板载基线。
+以上为源码实现范围。**项目处于验证阶段：22项功能自检及两项真实TD RAM模型复测通过，综合资源容量满足；主工程时序尚未通过，尚未完成布局布线和上板验收。** 最近综合使用17605/19600 LUT，setup WNS为−9.357 ns。实际证据见[验证状态](docs/verification.md)。
 
-## 目录与入口
+## 系统原理
 
-| 路径 | 用途 |
-|---|---|
-| [src/README.md](src/README.md) | 正式工程目录、数据链路和维护入口 |
-| [src/rtl/README.md](src/rtl/README.md) | RTL 分层、关键模块与连接规则 |
-| [src/td_project/README.md](src/td_project/README.md) | TD工程选择、依赖、时钟、板载操作与实现检查 |
-| [src/sim/README.md](src/sim/README.md) | 集中仿真命令、日志位置与结果判读 |
-| [src/tools/README.md](src/tools/README.md) | RLE1、DEM1、APT0 和字库工具用法 |
-| [docs/design/README.md](docs/design/README.md) | 设计规范、接口和验收标准索引 |
-| `reference/` | 厂商/开发板参考工程；当前工程仍引用其中的 HDMI 核与 PHY |
-
-日常维护直接修改 `src/` 下的正式代码。打开 TD 或运行自检不需要执行 `.local/` 中的生成器和过程脚本。
-
-## 开始验证
-
-从仓库根目录运行 PowerShell：
-
-```powershell
-& ./src/sim/run_p0.ps1 -Suite P0
-& ./src/sim/run_p0.ps1 -Suite Storage
-& ./src/sim/run_p0.ps1 -Suite Media
+```mermaid
+flowchart LR
+    TF[TF卡 / FAT32] --> SD[SD SPI与扇区校验]
+    SD --> FILE[目录扫描与文件读取]
+    FILE --> BMP[BMP解析与旋转]
+    BMP --> FB[SDRAM双帧缓存]
+    FB --> LINE[双行缓存与视频扫描]
+    LINE --> OSD[ASCII状态叠加]
+    FILE --> WAV[WAV解析与音频FIFO]
+    WAV --> AUDIO[48 kHz PCM与ACR]
+    OSD --> HDMI[厂商HDMI核与PHY]
+    AUDIO --> HDMI
+    HDMI --> MON[显示器 / 电视]
+    CTRL[按键 / UART] --> BMP
+    CTRL --> AUDIO
 ```
 
-也可用下面一条命令代替上述三条，收集全部用例：
+新图片写入非活动帧，完整装载后在视频帧边界切换。音频采用有界分块读取，与图片共享TF链路。各时钟域通过FIFO和握手传递数据、控制及状态，详细协议见[系统设计](docs/design/README.md)。
+
+## 准备与使用
+
+准备HX4S20开发板、对应下载器、TF卡及读卡器、HDMI显示设备；串口控制另需与板卡电平匹配的USB转TTL串口。TF卡使用FAT32，将至少4张易区分的合法BMP及一个合法WAV放入根目录。文件按目录出现顺序处理，不按名称排序。
+
+主工程为 [src/td_project/lean_player.al](src/td_project/lean_player.al)，顶层为 `lean_player_top`。板级连线、素材要求、按键、LED、UART协议及演示步骤见[使用说明](docs/使用说明.md)。下载前须先完成[验证与上板](docs/验证与上板.md)中的时序、原语和引脚检查。
+
+## 开发与复现
+
+开发工具为Anlogic TD和ModelSim。已使用的本机版本是TD V6.2.168116、ModelSim-Altera 10.3c；脚本允许通过参数指定安装路径。从仓库根目录运行：
 
 ```powershell
 & ./src/sim/run_p0.ps1 -Suite All
+& ./src/td_project/run_synthesis.ps1 -Project lean_player
 ```
 
-默认 ModelSim 路径为 `D:/altera/14.1/modelsim_ase/win32aloem/vsim.exe`，其他安装位置可用 `-VsimPath` 指定。先查看失败用例和日志，再打开 `src/td_project/player.al` 进行综合与实现。独立基础视频诊断入口为 `p0_hdmi.al`，两者的顶层、引脚和 LED 含义有所不同，详见 TD 说明。
+完整视频和整合仿真耗时较长，可按套件或单项运行。综合脚本只执行综合，不生成或下载bit；`Passed`与`TimingMet`须分别检查。工具配置、日志及模型边界分别见[仿真说明](src/sim/README.md)和[工程说明](src/td_project/README.md)。
 
-后续验证顺序建议为：时钟/复位与基础视频 → 存储和 TF 单图 → 音频 → 版式/转场 → 菜单/设置 → Flash 演示/恢复 → 告警与热插拔。中文显示需要提供字库，无卡素材演示需要先写入有效 DEM1 包。
+## 仓库导航
+
+| 位置 | 内容 |
+|---|---|
+| [docs/](docs/README.md) | 使用说明、系统设计、验证状态、赛题与开发板原始资料 |
+| [src/](src/README.md) | 正式RTL、器件IP包装、约束、TD工程和自检脚本 |
+| [src/rtl/](src/rtl/README.md) | 模块导航与连接规则 |
+| [reference/](reference/README.md) | 提供的实验例程、厂商IP、原始说明及素材 |
+
+正式工程直接使用厂商HDMI加密核及其PHY/串行器包装，PLL和SDRAM包装保留参数来源注释。参考资料的来源和依赖路径见[参考资料说明](reference/README.md)。构建产物和个人开发笔记不纳入源码提交。

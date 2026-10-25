@@ -1,1 +1,8 @@
 *.mp4
+/.local/
+/AGENTS.md
+/src/sim/build/
+/transcript
+/reference/**/*_Runs/
+/reference/**/log/
+/reference/**/.recent_user_depot.ini

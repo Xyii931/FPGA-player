@@ -68,7 +68,9 @@ module sd_sector_reader #(
     reg S_cancel_pending;
     reg [1:0] S_cancel_context;
     reg [15:0] S_cancel_tag;
-    reg [7:0] S_sector[0:511];
+    (* ram_style="bram" *) reg [7:0] S_sector[0:511];
+    reg [7:0] S_sector_q;
+    reg S_fetch_primed;
     reg [9:0] S_write_count;
     reg [8:0] S_out_index;
     reg S_block_good;
@@ -176,12 +178,20 @@ module sd_sector_reader #(
         end
     endtask
 
+    // Independent synchronous RAM output; no reset or variable first/next mux
+    // in its data path. Delivery uses two fetch clocks per byte, far below the
+    // SPI wire time, and preserves held output data under backpressure.
+    always @(posedge I_clk) begin
+        S_sector_q<=S_sector[S_out_index];
+        if(!I_reset && S_state==READ_WAIT && S_phy_byte_valid)
+            S_sector[S_write_count[8:0]]<=S_phy_byte;
+    end
     always @(posedge I_clk or posedge I_reset) begin
         if(I_reset) begin
             S_state<=POWER_WAIT; S_step<=INIT_CMD0; S_timer<=0; S_init_age<=0; S_probe_age<=0; S_delivery_age<=0;
             S_v2<=0; S_init_budget<=0; S_valid<=0; S_canceled<=0; S_active<=0; S_round_robin<=0;
             S_cancel_pending<=0; S_cancel_context<=0; S_cancel_tag<=0; O_cancel_done_valid<=0;
-            S_write_count<=0; S_out_index<=0; S_block_good<=0; S_output_valid<=0; S_complete_error<=0;
+            S_write_count<=0; S_out_index<=0; S_block_good<=0; S_output_valid<=0; S_complete_error<=0; S_fetch_primed<=0;
             S_response<=0; O_byte_data<=0; O_card_ready<=0; O_high_capacity<=0; O_card_error<=0;
             O_capacity_sectors<=0; S_csd<=0; S_csd_count<=0; S_csd_good<=0;
             for(S_reset_index=0;S_reset_index<4;S_reset_index=S_reset_index+1) begin
@@ -197,7 +207,6 @@ module sd_sector_reader #(
                 if(S_phy_block_done) S_csd_good<=S_phy_crc_ok;
             end
             if(S_state==READ_WAIT && S_phy_byte_valid) begin
-                S_sector[S_write_count[8:0]]<=S_phy_byte;
                 S_write_count<=S_write_count+10'd1;
             end
             if(S_state==READ_WAIT && S_phy_block_done) S_block_good<=S_phy_crc_ok;
@@ -282,11 +291,14 @@ module sd_sector_reader #(
                         O_card_ready<=0; O_card_error<=S_phy_error; complete_active(S_phy_error);
                     end else if(S_write_count!=512 || !S_block_good) begin
                         O_card_ready<=0; O_card_error<=5; complete_active(4'd5);
-                    end else begin S_out_index<=0; S_output_valid<=0; S_delivery_age<=0; S_state<=DELIVER; end
+                    end else begin S_out_index<=0; S_output_valid<=0; S_fetch_primed<=0; S_delivery_age<=0; S_state<=DELIVER; end
                 end
                 DELIVER: begin
                     if(S_canceled[S_active] || S_cancel_active) complete_active(4'd6);
-                    else if(!S_output_valid) begin O_byte_data<=S_sector[0]; S_output_valid<=1; end
+                    else if(!S_output_valid) begin
+                        if(!S_fetch_primed) S_fetch_primed<=1;
+                        else begin O_byte_data<=S_sector_q; S_output_valid<=1; end
+                    end
                     else if(O_byte_valid && I_byte_ready) begin
                         S_delivery_age<=0;
                         if(S_out_index==511) begin
@@ -297,7 +309,7 @@ module sd_sector_reader #(
                                 S_lba[S_active]<=S_lba[S_active]+32'd1; S_state<=SCHEDULE;
                             end
                         end else begin
-                            S_out_index<=S_out_index+9'd1; O_byte_data<=S_sector[S_out_index+9'd1];
+                            S_out_index<=S_out_index+9'd1; S_output_valid<=0; S_fetch_primed<=0;
                         end
                     end else if(S_delivery_age>=DELIVERY_TIMEOUT_CYCLES-1) complete_active(4'd8);
                     else S_delivery_age<=S_delivery_age+32'd1;

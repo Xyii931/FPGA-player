@@ -1,6 +1,8 @@
-// Three independently opened descriptors and one checked-sector engine.
+// Independently opened descriptors and one checked-sector engine (default three).
 // Path lookup supplies descriptors. Cancellation never flushes storage CDC.
-module fat32_file_reader (
+module fat32_file_reader #(
+    parameter integer CONTEXTS=3
+) (
     input wire I_clk,I_reset,I_mounted,
     input wire [31:0] I_fat_lba,I_data_lba,I_cluster_count,
     input wire [2:0] I_cluster_shift,
@@ -58,15 +60,16 @@ module fat32_file_reader (
     input wire [7:0] I_buffer_data
 );
     localparam [3:0] SCHEDULE=0,PREPARE=1,WALK_START=2,WALK_WAIT=3,
-        DATA_SEND=4,DATA_WAIT=5,DATA_ADDRESS=6,DATA_LATCH=7,DATA_OUT=8;
+        DATA_SEND=4,DATA_WAIT=5,DATA_ADDRESS=6,DATA_LATCH=7,DATA_OUT=8,COMPLETE=9;
     reg [3:0] S_state;
-    reg [2:0] S_open,S_pending,S_terminal,S_canceled,S_lost;
-    reg [31:0] S_first[0:2],S_size[0:2],S_cursor[0:2],S_remaining[0:2],S_requested[0:2];
-    reg [31:0] S_checkpoint[0:2],S_checkpoint_index[0:2],S_tortoise[0:2],S_power[0:2],S_lam[0:2];
-    reg [15:0] S_epoch[0:2];
-    reg [1:0] S_priority[0:2];
-    reg [7:0] S_error[0:2];
-    reg [3:0] S_storage_error[0:2];
+    reg [7:0] S_complete_error;
+    reg [CONTEXTS-1:0] S_open,S_pending,S_terminal,S_canceled,S_lost;
+    reg [31:0] S_first[0:CONTEXTS-1],S_size[0:CONTEXTS-1],S_cursor[0:CONTEXTS-1],S_remaining[0:CONTEXTS-1],S_requested[0:CONTEXTS-1];
+    reg [31:0] S_checkpoint[0:CONTEXTS-1],S_checkpoint_index[0:CONTEXTS-1],S_tortoise[0:CONTEXTS-1],S_power[0:CONTEXTS-1],S_lam[0:CONTEXTS-1];
+    reg [15:0] S_epoch[0:CONTEXTS-1];
+    reg [1:0] S_priority[0:CONTEXTS-1];
+    reg [7:0] S_error[0:CONTEXTS-1];
+    reg [3:0] S_storage_error[0:CONTEXTS-1];
     reg [1:0] S_active,S_rr,S_pick,S_terminal_pick;
     reg S_pick_found,S_terminal_found,S_cancel_pending;
     reg [1:0] S_cancel_context;
@@ -91,18 +94,18 @@ module fat32_file_reader (
         (({32'd0,S_checkpoint[S_active]}-64'd2)<<I_cluster_shift)+{32'd0,S_sector_in_cluster};
     wire [63:0] S_volume_data_end={32'd0,I_data_lba}+({32'd0,I_cluster_count}<<I_cluster_shift);
     wire [63:0] S_file_capacity={32'd0,I_cluster_count}<<(5'd9+{2'd0,I_cluster_shift});
-    wire S_load_bad=I_load_context==3 || I_cluster_count==0 || I_cluster_count>32'h0fffffee ||
+    wire S_load_bad=I_load_context>=CONTEXTS || I_cluster_count==0 || I_cluster_count>32'h0fffffee ||
         {32'd0,I_file_size}>S_file_capacity ||
         (I_file_size!=0 && (I_first_cluster<2 || I_first_cluster>I_cluster_count+32'd1)) ||
         (I_file_size==0 && I_first_cluster!=0 && (I_first_cluster<2 || I_first_cluster>I_cluster_count+32'd1));
 
     assign O_cancel_ready=!I_reset && !S_cancel_pending && !O_cancel_done_valid;
-    assign O_close_ready=!I_reset && I_close_context<3 && !S_pending[I_close_context] &&
+    assign O_close_ready=!I_reset && I_close_context<CONTEXTS && !S_pending[I_close_context] &&
         !S_terminal[I_close_context] && !I_cancel_valid;
     assign O_load_ready=!I_reset && I_mounted && (!O_load_result_valid || I_load_result_ready) &&
-        (I_load_context==3 || (!S_pending[I_load_context] && !S_terminal[I_load_context])) &&
+        (I_load_context>=CONTEXTS || (!S_pending[I_load_context] && !S_terminal[I_load_context])) &&
         !I_close_valid && !I_cancel_valid;
-    assign O_read_ready=!I_reset && I_mounted && I_read_context<3 && !S_pending[I_read_context] &&
+    assign O_read_ready=!I_reset && I_mounted && I_read_context<CONTEXTS && !S_pending[I_read_context] &&
         !S_terminal[I_read_context] && !I_load_valid && !I_close_valid && !I_cancel_valid &&
         !(S_cancel_pending && I_read_context==S_cancel_context && I_epoch==S_cancel_epoch);
     assign O_cancel_done_context=S_cancel_context;
@@ -135,9 +138,9 @@ module fat32_file_reader (
     always @* begin
         S_pick_found=0; S_pick=0; S_best=0; S_score=0; S_candidate=0;
         S_terminal_found=0; S_terminal_pick=0;
-        for(S_i=0;S_i<3;S_i=S_i+1) begin
+        for(S_i=0;S_i<CONTEXTS;S_i=S_i+1) begin
             S_candidate=S_rr+S_i;
-            if(S_candidate>=3) S_candidate=S_candidate-3;
+            if(S_candidate>=CONTEXTS) S_candidate=S_candidate-CONTEXTS;
             S_score={I_urgent_context[S_candidate],S_priority[S_candidate]};
             if(S_pending[S_candidate] && (!S_pick_found || S_score>S_best)) begin
                 S_pick_found=1; S_pick=S_candidate; S_best=S_score;
@@ -147,18 +150,22 @@ module fat32_file_reader (
     end
     task complete;
         input [7:0] error_code;
-        begin S_error[S_active]<=error_code; S_pending[S_active]<=0; S_terminal[S_active]<=1; S_state<=SCHEDULE; end
+        // Register the selected outcome before the per-context write decode.
+        // Otherwise all terminal conditions feed the dynamic table write mux
+        // in the same cycle, forming a long control path at 125 MHz.
+        begin S_complete_error<=error_code; S_state<=COMPLETE; end
     endtask
     integer S_reset_i;
     always @(posedge I_clk or posedge I_reset) begin
         if(I_reset) begin
             S_state<=SCHEDULE; S_open<=0; S_pending<=0; S_terminal<=0; S_canceled<=0; S_lost<=0;
+            S_complete_error<=0;
             S_active<=0; S_rr<=0; S_cancel_pending<=0; S_cancel_context<=0; S_cancel_epoch<=0;
             S_walk_first<=0; S_walk_target<=0; S_walk_base_index<=0;
             O_load_result_valid<=0; O_load_context<=0; O_load_error<=0; O_byte_data<=0;
             O_done_valid<=0; O_done_context<=0; O_done_epoch<=0; O_done_bytes<=0; O_done_eof<=0;
             O_done_error<=0; O_done_storage_error<=0; O_cancel_done_valid<=0;
-            for(S_reset_i=0;S_reset_i<3;S_reset_i=S_reset_i+1) begin
+            for(S_reset_i=0;S_reset_i<CONTEXTS;S_reset_i=S_reset_i+1) begin
                 S_first[S_reset_i]<=0; S_size[S_reset_i]<=0; S_cursor[S_reset_i]<=0;
                 S_remaining[S_reset_i]<=0; S_requested[S_reset_i]<=0; S_epoch[S_reset_i]<=0;
                 S_priority[S_reset_i]<=0; S_error[S_reset_i]<=0; S_storage_error[S_reset_i]<=0;
@@ -169,7 +176,7 @@ module fat32_file_reader (
             if(O_load_result_valid && I_load_result_ready) O_load_result_valid<=0;
             if(I_load_valid && O_load_ready) begin
                 O_load_result_valid<=1; O_load_context<=I_load_context; O_load_error<=S_load_bad ? 8'd9 : 8'd0;
-                if(I_load_context<3) begin
+                if(I_load_context<CONTEXTS) begin
                     S_open[I_load_context]<=!S_load_bad;
                     if(!S_load_bad) begin
                         S_first[I_load_context]<=I_first_cluster; S_size[I_load_context]<=I_file_size;
@@ -191,11 +198,11 @@ module fat32_file_reader (
             end
             if(S_cancel_accept) begin
                 S_cancel_pending<=1; S_cancel_context<=I_cancel_context; S_cancel_epoch<=I_cancel_epoch;
-                if(I_cancel_context<3 && S_pending[I_cancel_context] && S_epoch[I_cancel_context]==I_cancel_epoch)
+                if(I_cancel_context<CONTEXTS && S_pending[I_cancel_context] && S_epoch[I_cancel_context]==I_cancel_epoch)
                     S_canceled[I_cancel_context]<=1;
             end
             if(S_cancel_pending && !O_cancel_done_valid) begin
-                if(S_cancel_context==3) O_cancel_done_valid<=1;
+                if(S_cancel_context>=CONTEXTS) O_cancel_done_valid<=1;
                 else if(!((S_pending[S_cancel_context] || S_terminal[S_cancel_context]) &&
                     S_epoch[S_cancel_context]==S_cancel_epoch)) O_cancel_done_valid<=1;
             end
@@ -209,12 +216,17 @@ module fat32_file_reader (
             if(O_done_valid && I_done_ready) begin O_done_valid<=0; S_terminal[O_done_context]<=0; end
             if(!I_mounted) begin
                 S_open<=0;
-                for(S_reset_i=0;S_reset_i<3;S_reset_i=S_reset_i+1)
+                for(S_reset_i=0;S_reset_i<CONTEXTS;S_reset_i=S_reset_i+1)
                     if(S_pending[S_reset_i]) S_lost[S_reset_i]<=1;
             end
             case(S_state)
+                COMPLETE: begin
+                    S_error[S_active]<=S_complete_error;
+                    S_pending[S_active]<=0; S_terminal[S_active]<=1;
+                    S_state<=SCHEDULE;
+                end
                 SCHEDULE: if(S_pick_found) begin
-                    S_active<=S_pick; S_rr<=S_pick==2 ? 2'd0 : S_pick+2'd1; S_state<=PREPARE;
+                    S_active<=S_pick; S_rr<=S_pick==CONTEXTS-1 ? 2'd0 : S_pick+2'd1; S_state<=PREPARE;
                 end
                 PREPARE: begin
                     if(S_lost_active) complete(8'd1);
@@ -283,4 +295,9 @@ module fat32_file_reader (
             endcase
         end
     end
+    // synthesis translate_off
+    initial if(CONTEXTS<1 || CONTEXTS>3) begin
+        $display("FAIL: fat32_file_reader CONTEXTS must be 1..3"); $stop;
+    end
+    // synthesis translate_on
 endmodule

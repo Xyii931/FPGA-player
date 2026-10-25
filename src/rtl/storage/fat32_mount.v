@@ -25,7 +25,8 @@ module fat32_mount (
     input wire [7:0] I_buffer_data
 );
     localparam [3:0] IDLE=0,FETCH=1,FETCH_WAIT=2,SCAN_ADDRESS=3,SCAN_BYTE=4,
-        IDENTIFY=5,SELECT_PARTITION=6,VALIDATE=7,RESULT=8;
+        IDENTIFY=5,SELECT_PARTITION=6,VALIDATE=7,RESULT=8,
+        GEO_PREP=9,GEO_BASES=10,GEO_SUB=11,GEO_CLUSTERS=12,VALIDATE_FINAL=13;
     reg [3:0] S_state;
     reg [8:0] S_scan;
     reg S_partition_sector;
@@ -44,6 +45,7 @@ module fat32_mount (
     reg S_spc_valid;
     reg [2:0] S_shift;
     reg [63:0] S_total,S_overhead,S_clusters,S_fat_base,S_data_base,S_volume_end,S_partition_end,S_fat_entries;
+    reg [63:0] S_data_sectors;
     integer S_i;
     assign O_start_ready=!I_reset && S_state==IDLE;
     assign O_result_valid=!I_reset && S_state==RESULT;
@@ -59,14 +61,26 @@ module fat32_mount (
             default:S_spc_valid=0;
         endcase
         S_total=S_total16!=0 ? {48'd0,S_total16} : {32'd0,S_total32};
-        S_overhead={48'd0,S_reserved}+{56'd0,S_fats}*{32'd0,S_fat_size};
-        S_clusters=S_total>S_overhead ? (S_total-S_overhead)>>S_shift : 64'd0;
-        S_fat_base={32'd0,S_partition_lba}+{48'd0,S_reserved};
-        if(S_flags[7]) S_fat_base=S_fat_base+{60'd0,S_flags[3:0]}*{32'd0,S_fat_size};
-        S_data_base={32'd0,S_partition_lba}+S_overhead;
-        S_volume_end={32'd0,S_partition_lba}+S_total;
-        S_partition_end={32'd0,S_partition_lba}+{31'd0,S_partition_length};
         S_fat_entries={32'd0,S_fat_size}<<7;
+    end
+    // Mounting is a one-shot operation. Validate the allowed FAT counts before
+    // arithmetic, then split geometry over clocks instead of synthesizing two
+    // variable multipliers, chained additions, subtraction and a barrel shift.
+    // Scratch values are overwritten before VALIDATE_FINAL; no RAM/data reset.
+    always @(posedge I_clk) begin
+        if(S_state==GEO_PREP) begin
+            S_overhead<={48'd0,S_reserved}+(S_fats==2 ? {31'd0,S_fat_size,1'b0} : {32'd0,S_fat_size});
+            S_fat_base<={32'd0,S_partition_lba}+{48'd0,S_reserved};
+        end
+        if(S_state==GEO_BASES) begin
+            S_data_base<={32'd0,S_partition_lba}+S_overhead;
+            S_volume_end<={32'd0,S_partition_lba}+S_total;
+            S_partition_end<={32'd0,S_partition_lba}+{31'd0,S_partition_length};
+            // Flags can select only FAT0 or FAT1 after structural validation.
+            S_fat_base<=S_fat_base+((S_flags[7] && S_flags[0]) ? {32'd0,S_fat_size} : 64'd0);
+        end
+        if(S_state==GEO_SUB) S_data_sectors<=S_total>S_overhead ? S_total-S_overhead : 64'd0;
+        if(S_state==GEO_CLUSTERS) S_clusters<=S_data_sectors>>S_shift;
     end
     task clear_fields;
         begin
@@ -166,7 +180,15 @@ module fat32_mount (
                     if(S_signature!=16'haa55 || (S_jump!=8'heb && S_jump!=8'he9) || S_bps!=512 ||
                         S_root_entries!=0 || S_fat16!=0 || S_version!=0) finish(8'd3);
                     else if(!S_spc_valid || S_reserved==0 || (S_fats!=1 && S_fats!=2) || S_fat_size==0 ||
-                        (S_flags[7] && S_flags[3:0]>=S_fats) || S_total<=S_overhead ||
+                        (S_flags[7] && S_flags[3:0]>=S_fats)) finish(8'd6);
+                    else S_state<=GEO_PREP;
+                end
+                GEO_PREP:S_state<=GEO_BASES;
+                GEO_BASES:S_state<=GEO_SUB;
+                GEO_SUB:S_state<=GEO_CLUSTERS;
+                GEO_CLUSTERS:S_state<=VALIDATE_FINAL;
+                VALIDATE_FINAL: begin
+                    if(S_total<=S_overhead ||
                         S_clusters<65525 || S_clusters>64'h0fffffee || S_fat_entries<S_clusters+2 ||
                         S_root_cluster<2 || {32'd0,S_root_cluster}>S_clusters+1) finish(8'd6);
                     else if(S_total>{31'd0,S_partition_length} || S_volume_end>{31'd0,S_capacity} ||
