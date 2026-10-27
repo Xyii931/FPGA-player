@@ -22,22 +22,25 @@ module wav_parser (
     output reg [31:0] O_sample_index,
     output reg O_sample_last
 );
-    localparam [3:0] IDLE=0, RIFF=1, RIFF_CHECK=2, BOUNDARY=3, CHUNK=4,
+    localparam [4:0] IDLE=0, RIFF=1, RIFF_CHECK=2, BOUNDARY=3, CHUNK=4,
         CHUNK_CHECK=5, FMT=6, FMT_CHECK=7, META=8, DATA=9,
-        SKIP=10, NEXT=11, PAD=12, TAIL=13, DRAIN=14, FINISH=15;
-    reg [3:0] S_state;
+        SKIP=10, NEXT=11, PAD=12, TAIL=13, DRAIN=14, FINISH=15,
+        CHUNK_LIMIT=16;
+    reg [4:0] S_state;
     reg [7:0] S_riff [0:11];
     reg [7:0] S_chunk [0:7];
     reg [7:0] S_fmt [0:15];
     reg [3:0] S_header_index;
     reg [31:0] S_pos, S_size, S_riff_end, S_left, S_payload_index, S_frame;
+    reg [32:0] S_chunk_limit_q;
     reg S_fmt_seen, S_data_seen, S_odd;
     reg [1:0] S_component;
     reg [7:0] S_l_lo, S_l_hi, S_r_lo;
     wire [31:0] S_chunk_size = {S_chunk[7],S_chunk[6],S_chunk[5],S_chunk[4]};
     wire [31:0] S_chunk_id = {S_chunk[0],S_chunk[1],S_chunk[2],S_chunk[3]};
-    wire [63:0] S_riff_limit = {32'd0,S_riff[7],S_riff[6],S_riff[5],S_riff[4]} + 64'd8;
-    wire [63:0] S_chunk_limit = {32'd0,S_pos} + {32'd0,S_chunk_size} + {63'd0,S_chunk_size[0]};
+    // The limit exceeds the RIFF size when it carries past 32 bits, so a
+    // 33-bit sum compares correctly without a 64-bit carry chain.
+    wire [32:0] S_riff_limit = {1'b0,S_riff[7],S_riff[6],S_riff[5],S_riff[4]} + 33'd8;
     assign O_start_ready = S_state == IDLE;
     assign O_busy = S_state != IDLE;
     assign O_header_valid = S_state == META && !I_abort && !I_stream_error;
@@ -47,7 +50,7 @@ module wav_parser (
     always @(posedge I_clk or posedge I_reset) begin
         if (I_reset) begin
             S_state<=IDLE; S_header_index<=0; S_pos<=0; S_size<=0; S_riff_end<=0;
-            S_left<=0; S_payload_index<=0; S_frame<=0; S_fmt_seen<=0; S_data_seen<=0;
+            S_left<=0; S_payload_index<=0; S_frame<=0; S_chunk_limit_q<=0; S_fmt_seen<=0; S_data_seen<=0;
             S_odd<=0; S_component<=0; S_l_lo<=0; S_l_hi<=0; S_r_lo<=0;
             O_done<=0; O_err<=0; O_error_code<=0; O_tag<=0;
             O_data_offset<=0; O_data_bytes<=0; O_total_frames<=0;
@@ -72,7 +75,7 @@ module wav_parser (
                         if ({S_riff[0],S_riff[1],S_riff[2],S_riff[3]} != 32'h52494646 ||
                             {S_riff[8],S_riff[9],S_riff[10],S_riff[11]} != 32'h57415645) begin
                             O_error_code<=1; S_state<=FINISH;
-                        end else if (S_riff_limit<12 || S_riff_limit>{32'd0,S_size}) begin
+                        end else if (S_riff_limit<33'd12 || S_riff_limit>{1'b0,S_size}) begin
                             O_error_code<=3; S_state<=FINISH;
                         end else begin S_riff_end<=S_riff_limit[31:0]; S_state<=BOUNDARY; end
                     end
@@ -87,7 +90,11 @@ module wav_parser (
                     end
                     CHUNK_CHECK: begin
                         S_left<=S_chunk_size; S_payload_index<=0; S_odd<=S_chunk_size[0];
-                        if (S_chunk_limit>{32'd0,S_riff_end}) begin O_error_code<=3; S_state<=FINISH; end
+                        S_chunk_limit_q<={1'b0,S_pos}+{1'b0,S_chunk_size}+{32'd0,S_chunk_size[0]};
+                        S_state<=CHUNK_LIMIT;
+                    end
+                    CHUNK_LIMIT: begin
+                        if (S_chunk_limit_q>{1'b0,S_riff_end}) begin O_error_code<=3; S_state<=FINISH; end
                         else if (S_chunk_id==32'h666d7420) begin
                             if (S_fmt_seen || S_data_seen) begin O_error_code<=4; S_state<=FINISH; end
                             else if (S_chunk_size<16) begin O_error_code<=2; S_state<=FINISH; end

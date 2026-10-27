@@ -74,6 +74,14 @@ module lean_media_source (
     wire [1:0] S_file_done_context;
     wire [7:0] S_file_done_error;
     wire [31:0] S_file_done_bytes;
+    // Single-writer done record: file and local completions are captured once
+    // here, so the file reader's error/byte/EOF registers only fan out to this
+    // one record instead of driving every consumer enable through mux trees.
+    reg S_done_valid,S_done_file;
+    reg [1:0] S_done_context;
+    reg [7:0] S_done_error;
+    reg [31:0] S_done_bytes;
+    reg S_done_eof;
     wire S_mount_ready,S_mount_done,S_mounted;
     wire [7:0] S_mount_error;
     wire [31:0] S_fat,S_data,S_clusters,S_root;
@@ -107,8 +115,11 @@ module lean_media_source (
     wire [7:0] S_load_error;
     wire S_file_cancel_ready,S_file_cancel_done;
     wire [1:0] S_file_cancel_context;
-    wire S_cancel_request=|(I_cancel & S_pending & ~S_cancel_seen);
-    wire [1:0] S_cancel_pick=(I_cancel[1] && S_pending[1] && !S_cancel_seen[1]) ? 2'd1 : 2'd0;
+    // Register the cancel request once so the loader/audio abort cones stop
+    // fanning into the file reader and shared walker through live muxes.
+    reg [1:0] S_cancel_q;
+    wire S_cancel_request=|(S_cancel_q & S_pending & ~S_cancel_seen);
+    wire [1:0] S_cancel_pick=(S_cancel_q[1] && S_pending[1] && !S_cancel_seen[1]) ? 2'd1 : 2'd0;
     wire S_read_fire=S_command==READ && S_read_ready && O_catalog_ready && I_card_ready;
     wire S_load_fire=S_command==LOAD && S_load_ready && O_catalog_ready && I_card_ready;
     assign O_command_ready=!I_reset && O_catalog_ready && I_card_ready &&
@@ -116,11 +127,11 @@ module lean_media_source (
         !I_cancel[I_command_audio] && (!I_command_audio || O_audio_found);
     assign O_begin_valid=!I_reset && S_command==BEGIN;
     assign O_begin_audio=S_audio;
-    assign O_done_valid=S_file_done || S_local_done;
-    assign O_done_context=S_file_done ? S_file_done_context : {1'b0,S_local_audio};
-    assign O_done_error=S_file_done ? S_file_done_error : 8'd1;
-    assign O_done_bytes=S_file_done ? S_file_done_bytes : 32'd0;
-    assign O_done_eof=S_file_done && S_file_eof;
+    assign O_done_valid=S_done_valid;
+    assign O_done_context=S_done_context;
+    assign O_done_error=S_done_error;
+    assign O_done_bytes=S_done_bytes;
+    assign O_done_eof=S_done_eof;
     assign S_m_ready=S_port_ready && S_mount_owner;
     assign S_d_ready=S_port_ready && S_scan_owner;
     assign S_f_ready=S_port_ready && !S_mount_owner && !S_scan_owner;
@@ -128,6 +139,21 @@ module lean_media_source (
     assign S_d_result=S_port_result && S_scan_owner;
     assign S_f_result=S_port_result && !S_mount_owner && !S_scan_owner;
     assign S_port_take=S_mount_owner ? S_m_take : S_scan_owner ? S_d_take : S_f_take;
+
+    wire W_d_start,W_d_mounted,W_d_cancel,W_d_result_ready,W_d_read_ready,W_d_read_result_valid;
+    wire [31:0] W_d_first,W_d_target,W_d_hop_limit;
+    wire W_d_start_ready,W_d_result_valid,W_d_eoc,W_d_read_valid,W_d_read_abort,W_d_read_result_ready;
+    wire [31:0] W_d_cluster,W_d_hops,W_d_lba;
+    wire [7:0] W_d_error;
+    wire [3:0] W_d_storage_error;
+    wire [8:0] W_d_address;
+    wire W_f_start,W_f_mounted,W_f_cancel,W_f_result_ready,W_f_read_ready,W_f_read_result_valid;
+    wire [31:0] W_f_first,W_f_target,W_f_hop_limit;
+    wire W_f_start_ready,W_f_result_valid,W_f_eoc,W_f_read_valid,W_f_read_abort,W_f_read_result_ready;
+    wire [31:0] W_f_cluster,W_f_hops,W_f_lba;
+    wire [7:0] W_f_error;
+    wire [3:0] W_f_storage_error;
+    wire [8:0] W_f_address;
 
     fat32_mount u_mount (
         .I_clk(I_clk),.I_reset(I_reset),.I_card_ready(I_card_ready),.I_capacity_sectors(I_capacity_sectors),
@@ -151,7 +177,17 @@ module lean_media_source (
         .O_read_valid(S_d_valid),.I_read_ready(S_d_ready),.O_read_lba(S_d_lba),.O_read_abort(S_d_abort),
         .I_read_result_valid(S_d_result),.O_read_result_ready(S_d_take),
         .I_read_error(S_port_error),.I_storage_error(S_port_storage),
-        .O_buffer_address(S_d_address),.I_buffer_data(S_buffer_data)
+        .O_buffer_address(S_d_address),.I_buffer_data(S_buffer_data),
+        .O_walk_start(W_d_start),.O_walk_mounted(W_d_mounted),.O_walk_cancel(W_d_cancel),
+        .O_walk_result_ready(W_d_result_ready),.O_walk_read_ready(W_d_read_ready),
+        .O_walk_read_result_valid(W_d_read_result_valid),.O_walk_first(W_d_first),
+        .O_walk_target(W_d_target),.O_walk_hop_limit(W_d_hop_limit),
+        .I_walk_start_ready(W_d_start_ready),.I_walk_result_valid(W_d_result_valid),
+        .I_walk_eoc(W_d_eoc),.I_walk_cluster(W_d_cluster),.I_walk_hops(W_d_hops),
+        .I_walk_read_lba(W_d_lba),.I_walk_error(W_d_error),
+        .I_walk_storage_error(W_d_storage_error),.I_walk_read_valid(W_d_read_valid),
+        .I_walk_read_abort(W_d_read_abort),.I_walk_read_result_ready(W_d_read_result_ready),
+        .I_walk_address(W_d_address)
     );
     fat32_file_reader #(.CONTEXTS(2)) u_files (
         .I_clk(I_clk),.I_reset(I_reset),.I_mounted(O_catalog_ready && I_card_ready),
@@ -165,7 +201,7 @@ module lean_media_source (
         .I_offset(S_offset),.I_length(S_length),.I_epoch(16'd0),.I_urgent_context(3'd0),
         .O_byte_valid(O_byte_valid),.I_byte_ready(I_byte_ready),.O_byte_data(O_byte_data),
         .O_byte_context(O_byte_context),.O_byte_offset(O_byte_offset),.O_byte_last(O_byte_last),
-        .O_done_valid(S_file_done),.I_done_ready(I_done_ready),.O_done_context(S_file_done_context),
+        .O_done_valid(S_file_done),.I_done_ready(S_done_valid && S_done_file && I_done_ready),.O_done_context(S_file_done_context),
         .O_done_bytes(S_file_done_bytes),.O_done_eof(S_file_eof),.O_done_error(S_file_done_error),
         .I_cancel_valid(S_cancel_request && !S_cancel_active),.O_cancel_ready(S_file_cancel_ready),
         .I_cancel_context(S_cancel_pick),.I_cancel_epoch(16'd0),
@@ -175,7 +211,38 @@ module lean_media_source (
         .I_sector_result_valid(S_f_result),.O_sector_result_ready(S_f_take),
         .I_sector_error(S_port_error),.I_sector_storage_error(S_port_storage),
         .O_buffer_address(S_f_address),.I_buffer_data(S_buffer_data),
-        .O_load_context(), .O_close_ready(), .O_byte_epoch(), .O_done_epoch(), .O_done_storage_error(), .O_cancel_done_epoch()
+        .O_load_context(), .O_close_ready(), .O_byte_epoch(), .O_done_epoch(), .O_done_storage_error(), .O_cancel_done_epoch(),
+        .O_walk_start(W_f_start),.O_walk_mounted(W_f_mounted),.O_walk_cancel(W_f_cancel),
+        .O_walk_result_ready(W_f_result_ready),.O_walk_read_ready(W_f_read_ready),
+        .O_walk_read_result_valid(W_f_read_result_valid),.O_walk_first(W_f_first),
+        .O_walk_target(W_f_target),.O_walk_hop_limit(W_f_hop_limit),
+        .I_walk_start_ready(W_f_start_ready),.I_walk_result_valid(W_f_result_valid),
+        .I_walk_eoc(W_f_eoc),.I_walk_cluster(W_f_cluster),.I_walk_hops(W_f_hops),
+        .I_walk_read_lba(W_f_lba),.I_walk_error(W_f_error),
+        .I_walk_storage_error(W_f_storage_error),.I_walk_read_valid(W_f_read_valid),
+        .I_walk_read_abort(W_f_read_abort),.I_walk_read_result_ready(W_f_read_result_ready),
+        .I_walk_address(W_f_address)
+    );
+    fat32_chain_share u_walk_share (
+        .I_clk(I_clk),.I_reset(I_reset),
+        .I_fat_lba(S_fat),.I_cluster_count(S_clusters),
+        .I_buffer_data(S_buffer_data),.I_read_error(S_port_error),.I_storage_error(S_port_storage),
+        .D_start(W_d_start),.D_mounted(W_d_mounted),.D_cancel(W_d_cancel),
+        .D_result_ready(W_d_result_ready),.D_read_ready(W_d_read_ready),
+        .D_read_result_valid(W_d_read_result_valid),.D_first(W_d_first),
+        .D_target(W_d_target),.D_hop_limit(W_d_hop_limit),
+        .D_start_ready(W_d_start_ready),.D_result_valid(W_d_result_valid),.D_eoc(W_d_eoc),
+        .D_read_valid(W_d_read_valid),.D_read_abort(W_d_read_abort),
+        .D_read_result_ready(W_d_read_result_ready),.D_cluster(W_d_cluster),.D_hops(W_d_hops),
+        .D_lba(W_d_lba),.D_error(W_d_error),.D_storage_error(W_d_storage_error),.D_address(W_d_address),
+        .F_start(W_f_start),.F_mounted(W_f_mounted),.F_cancel(W_f_cancel),
+        .F_result_ready(W_f_result_ready),.F_read_ready(W_f_read_ready),
+        .F_read_result_valid(W_f_read_result_valid),.F_first(W_f_first),
+        .F_target(W_f_target),.F_hop_limit(W_f_hop_limit),
+        .F_start_ready(W_f_start_ready),.F_result_valid(W_f_result_valid),.F_eoc(W_f_eoc),
+        .F_read_valid(W_f_read_valid),.F_read_abort(W_f_read_abort),
+        .F_read_result_ready(W_f_read_result_ready),.F_cluster(W_f_cluster),.F_hops(W_f_hops),
+        .F_lba(W_f_lba),.F_error(W_f_error),.F_storage_error(W_f_storage_error),.F_address(W_f_address)
     );
     fat32_sector_port u_sector (
         .I_clk(I_clk),.I_reset(I_reset),.I_card_ready(I_card_ready),
@@ -204,13 +271,26 @@ module lean_media_source (
             S_phase<=WAIT_CARD; S_command<=CMD_IDLE; S_pending<=0; S_audio<=0; S_audio_loaded<=0;
             S_offset<=0; S_length<=0; S_first<=0; S_index<=0; S_retry<=0;
             S_audio_first<=0; S_audio_size<=0; S_cancel_active<=0; S_cancel_seen<=0;
+            S_cancel_q<=0;
             S_local_done<=0; S_local_audio<=0;
+            S_done_valid<=0; S_done_file<=0; S_done_context<=0; S_done_error<=0;
+            S_done_bytes<=0; S_done_eof<=0;
             O_catalog_ready<=0; O_image_count<=0; O_audio_found<=0; O_catalog_overflow<=0;
             O_catalog_error<=0; O_file_size<=0; O_begin_error<=0;
         end else begin
-            if(S_local_done && !S_file_done && I_done_ready) S_local_done<=0;
+            S_cancel_q<=I_cancel;
+            if(!S_done_valid) begin
+                if(S_file_done) begin
+                    S_done_valid<=1; S_done_file<=1; S_done_context<=S_file_done_context;
+                    S_done_error<=S_file_done_error; S_done_bytes<=S_file_done_bytes; S_done_eof<=S_file_eof;
+                end else if(S_local_done) begin
+                    S_done_valid<=1; S_done_file<=0; S_done_context<={1'b0,S_local_audio};
+                    S_done_error<=8'd1; S_done_bytes<=32'd0; S_done_eof<=1'b0;
+                    S_local_done<=0;
+                end
+            end
             if(S_read_fire) begin S_pending[S_audio]<=1; S_cancel_seen[S_audio]<=0; end
-            if(O_done_valid && I_done_ready) S_pending[O_done_context[0]]<=0;
+            if(S_done_valid && I_done_ready) begin S_done_valid<=0; S_pending[S_done_context[0]]<=0; end
             if(S_cancel_request && !S_cancel_active && S_file_cancel_ready) begin
                 S_cancel_active<=1; S_cancel_seen[S_cancel_pick[0]]<=1;
             end

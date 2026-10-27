@@ -29,6 +29,12 @@ module lean_image_loader (
     reg [1:0] S_rotation;
     reg S_slot,S_parser_seen,S_file_seen;
     reg [18:0] S_clear;
+    // Capture each pixel with its 640-pixel row offset. The frame memory's own
+    // write register then only adds base+x, splitting the long address chain.
+    reg S_px_valid;
+    reg [9:0] S_px_x;
+    reg [18:0] S_px_row;
+    reg [31:0] S_px_data;
     wire S_parser_ready,S_parser_done,S_parser_error,S_header,S_pixel,S_pixel_ready;
     wire [15:0] S_width,S_height,S_x,S_y;
     wire [31:0] S_rgba;
@@ -52,14 +58,18 @@ module lean_image_loader (
         endcase
     end
     wire [20:0] S_base=S_slot ? 21'd307200 : 21'd0;
+    wire [18:0] S_row_offset=({10'd0,C_y}<<9)+({12'd0,C_y}<<7);
+    wire S_px_free=!S_px_valid || I_write_ready;
+    wire S_px_take=S_px_valid && I_write_ready;
+    wire S_px_accept=S_state==LOAD && !S_abort && S_pixel && !S_drop && S_px_free;
     assign O_start_ready=!I_reset && S_state==IDLE && S_parser_ready;
     assign O_write_valid=!I_reset && !S_abort &&
-        (S_state==CLEAR || (S_state==LOAD && S_pixel && !S_drop));
+        (S_state==CLEAR || (S_state==LOAD && S_px_valid));
     assign O_write_address=S_base+(S_state==CLEAR ? {2'd0,S_clear} :
-        ({12'd0,C_y}<<9)+({12'd0,C_y}<<7)+{11'd0,C_x});
+        {2'd0,S_px_row}+{11'd0,S_px_x});
     // bmp_parser emits RRGGBBAA; the lean frame stores ffRRGGBB.
-    assign O_write_data=S_state==CLEAR ? 32'd0 : {8'hff,S_rgba[31:8]};
-    assign S_pixel_ready=S_state==LOAD && !S_abort && (S_drop || I_write_ready);
+    assign O_write_data=S_state==CLEAR ? 32'd0 : S_px_data;
+    assign S_pixel_ready=S_state==LOAD && !S_abort && (S_drop || S_px_free);
     assign O_byte_ready=!I_reset && (S_state==LOAD ? S_byte_ready : S_state==RETIRE);
     assign O_cancel=S_state!=IDLE && S_state!=DONE && S_abort && !S_file_seen;
     assign O_done_valid=!I_reset && S_state==DONE;
@@ -75,7 +85,8 @@ module lean_image_loader (
     always @(posedge I_clk or posedge I_reset) begin
         if(I_reset) begin
             S_state<=IDLE; S_rotation<=0; S_slot<=0; S_parser_seen<=0; S_file_seen<=0;
-            S_clear<=0; O_error<=0; O_pixels<=0;
+            S_clear<=0; S_px_valid<=0; S_px_x<=0; S_px_row<=0; S_px_data<=0;
+            O_error<=0; O_pixels<=0;
         end else begin
             if(S_state!=IDLE && S_state!=DONE) begin
                 if(I_file_done) begin
@@ -92,6 +103,7 @@ module lean_image_loader (
             case(S_state)
                 IDLE:if(S_start) begin
                     S_rotation<=I_rotation; S_slot<=I_slot; S_clear<=0; O_pixels<=0;
+                    S_px_valid<=0;
                     S_parser_seen<=0; S_file_seen<=0; O_error<=0; S_state<=CLEAR;
                 end
                 CLEAR:if(S_abort) S_state<=RETIRE;
@@ -100,8 +112,12 @@ module lean_image_loader (
                         else S_clear<=S_clear+1'b1;
                     end
                 LOAD:begin
-                    if(S_pixel && S_pixel_ready && !S_drop) O_pixels<=O_pixels+1'b1;
-                    if(S_parser_done || S_abort) S_state<=RETIRE;
+                    if(S_px_accept) begin
+                        S_px_valid<=1; S_px_x<=C_x; S_px_row<=S_row_offset;
+                        S_px_data<={8'hff,S_rgba[31:8]}; O_pixels<=O_pixels+1'b1;
+                    end else if(S_px_take) S_px_valid<=0;
+                    if(S_abort) begin S_px_valid<=0; S_state<=RETIRE; end
+                    else if(S_parser_done && !S_px_valid && !S_px_accept) S_state<=RETIRE;
                 end
                 RETIRE:if(S_parser_seen && S_file_seen && I_writes_idle) begin
                     if(O_error==0 && O_pixels!=(S_rotation[0] ? 19'd172800 : 19'd307200)) O_error<=4'd5;

@@ -4,7 +4,8 @@
 module async_fifo #(
     parameter integer DATA_BITS = 48,
     parameter integer ADDR_BITS = 11,
-    parameter integer USE_BRAM32K = 0
+    parameter integer USE_BRAM32K = 0,
+    parameter integer FULL_REGISTER = 0
 ) (
     input wire I_write_clk, I_read_clk, I_async_reset,
     input wire I_write_valid,
@@ -30,6 +31,14 @@ module async_fifo #(
     wire [ADDR_BITS:0] S_read_gray_next = (S_read_next >> 1) ^ S_read_next;
     wire [ADDR_BITS:0] S_full_compare =
         {~S_read_gray_sync[ADDR_BITS:ADDR_BITS-1],S_read_gray_sync[ADDR_BITS-2:0]};
+    // The full comparison feeds write_ready/write_fire, which drives the next
+    // write pointer. Registering the flag removes that cone from the pointer
+    // path at the cost of one level of write-side latency: the writer must
+    // stop one entry earlier. Only the audio BRAM32K FIFO selects this, where
+    // the low-water flow control already keeps the fill far below full.
+    reg S_full_q;
+    wire S_full_now=S_write_gray == S_full_compare;
+    wire S_write_full=FULL_REGISTER ? S_full_q : S_full_now;
     reg S_read_valid;
     wire [DATA_BITS-1:0] S_read_data;
     wire S_head_available = S_read_gray_next != S_write_gray_sync;
@@ -47,7 +56,7 @@ module async_fifo #(
         .I_clk(I_write_clk),.I_async_reset(I_async_reset),.O_reset(S_write_reset));
     reset_sync u_read_reset (
         .I_clk(I_read_clk),.I_async_reset(I_async_reset),.O_reset(S_read_reset));
-    assign O_write_full = S_write_gray == S_full_compare;
+    assign O_write_full = S_write_full;
     // Both local resets assert asynchronously and release on their own clock.
     // Use those local levels for datapath gating; the shared request must not
     // bypass reset synchronization into another domain's ready/valid logic.
@@ -87,7 +96,9 @@ module async_fifo #(
         if (S_write_reset) begin
             S_write_binary <= 0; S_write_gray <= 0;
             S_read_gray_meta <= 0; S_read_gray_sync <= 0;
+            S_full_q <= 0;
         end else begin
+            if (FULL_REGISTER) S_full_q <= S_full_now;
             S_write_binary <= S_write_next;
             S_write_gray <= (S_write_next >> 1) ^ S_write_next;
             S_read_gray_meta <= S_read_gray;

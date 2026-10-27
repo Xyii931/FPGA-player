@@ -1,6 +1,6 @@
 // UART 8N1, ready/valid byte input. Idle line and reset level are high.
 module uart_tx #(
-    parameter integer CLOCK_HZ=125000000,BAUD=115200
+    parameter integer CLOCK_HZ=100000000,BAUD=115200
 ) (
     input wire I_clk,I_reset,I_valid,
     output wire O_ready,

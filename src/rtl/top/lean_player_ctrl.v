@@ -1,7 +1,7 @@
 // Small stop-and-wait ASCII console. N/P/?; A0/1, R0..3, T01..60, V0..4, M0/1.
 // One complete command per CR/LF; invalid/overlong lines never partly execute.
 module lean_player_ctrl #(
-    parameter integer CLOCK_HZ=125000000
+    parameter integer CLOCK_HZ=100000000
 ) (
     input wire I_clk,I_reset,
     input wire [3:0] I_key_release,

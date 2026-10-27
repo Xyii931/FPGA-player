@@ -2,7 +2,7 @@
 # Default: functional storage substitute. Native: real wrapper plus installed TD models.
 set bram_script_dir [file dirname [file normalize [info script]]]
 set bram_extra_tops {}
-if {[info exists ::env(FPGA_PLAYER_NATIVE_BRAM)] && $::env(FPGA_PLAYER_NATIVE_BRAM) ni {0 1}} {
+if {[info exists ::env(FPGA_PLAYER_NATIVE_BRAM)] && [lsearch -exact {0 1} $::env(FPGA_PLAYER_NATIVE_BRAM)] < 0} {
     error "FPGA_PLAYER_NATIVE_BRAM must be 0 (functional) or 1 (installed TD models)"
 }
 if {[info exists ::env(FPGA_PLAYER_NATIVE_BRAM)] && $::env(FPGA_PLAYER_NATIVE_BRAM) eq "1"} {

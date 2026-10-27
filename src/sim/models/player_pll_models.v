@@ -16,7 +16,7 @@ module player_sys_pll (
     reg S_clk0 = 1'b0;
     reg S_clk1 = 1'b0;
     always #5 if (!S_stop && !I_reset) S_clk0 = ~S_clk0;
-    always #4 if (!S_stop && !I_reset) S_clk1 = ~S_clk1;
+    always #5 if (!S_stop && !I_reset) S_clk1 = ~S_clk1;
     assign O_clk_100m = S_clk0;
     assign O_clk_125m = S_clk1;
     assign O_clk_125m_sft = ~S_clk1;

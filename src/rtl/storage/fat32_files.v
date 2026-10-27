@@ -77,6 +77,13 @@ module fat32_files (
     wire [7:0] S_sector_error,S_buffer_data;
     wire [3:0] S_sector_storage_error;
     wire [8:0] S_buffer_address;
+    wire F_start,F_mounted,F_cancel,F_result_ready,F_read_ready,F_read_result_valid;
+    wire [31:0] F_first,F_target,F_hop_limit;
+    wire F_start_ready,F_result_valid,F_eoc,F_read_valid,F_read_abort,F_read_result_ready;
+    wire [31:0] F_cluster,F_hops,F_lba;
+    wire [7:0] F_error;
+    wire [3:0] F_storage_error;
+    wire [8:0] F_address;
     fat32_file_reader u_files (
         .I_clk(I_clk),
         .I_reset(I_reset),
@@ -139,7 +146,33 @@ module fat32_files (
         .I_sector_error(S_sector_error),
         .I_sector_storage_error(S_sector_storage_error),
         .O_buffer_address(S_buffer_address),
-        .I_buffer_data(S_buffer_data));
+        .I_buffer_data(S_buffer_data),
+        .O_walk_start(F_start),.O_walk_mounted(F_mounted),.O_walk_cancel(F_cancel),
+        .O_walk_result_ready(F_result_ready),.O_walk_read_ready(F_read_ready),
+        .O_walk_read_result_valid(F_read_result_valid),.O_walk_first(F_first),
+        .O_walk_target(F_target),.O_walk_hop_limit(F_hop_limit),
+        .I_walk_start_ready(F_start_ready),.I_walk_result_valid(F_result_valid),
+        .I_walk_eoc(F_eoc),.I_walk_cluster(F_cluster),.I_walk_hops(F_hops),
+        .I_walk_read_lba(F_lba),.I_walk_error(F_error),
+        .I_walk_storage_error(F_storage_error),.I_walk_read_valid(F_read_valid),
+        .I_walk_read_abort(F_read_abort),.I_walk_read_result_ready(F_read_result_ready),
+        .I_walk_address(F_address));
+    fat32_chain_share u_walk_share (
+        .I_clk(I_clk),.I_reset(I_reset),
+        .I_fat_lba(I_fat_lba),.I_cluster_count(I_cluster_count),
+        .I_buffer_data(S_buffer_data),.I_read_error(S_sector_error),.I_storage_error(S_sector_storage_error),
+        .D_start(1'b0),.D_mounted(1'b1),.D_cancel(1'b0),.D_result_ready(1'b0),
+        .D_read_ready(1'b0),.D_read_result_valid(1'b0),.D_first(32'd0),.D_target(32'd0),.D_hop_limit(32'd0),
+        .D_start_ready(),.D_result_valid(),.D_eoc(),.D_read_valid(),.D_read_abort(),.D_read_result_ready(),
+        .D_cluster(),.D_hops(),.D_lba(),.D_error(),.D_storage_error(),.D_address(),
+        .F_start(F_start),.F_mounted(F_mounted),.F_cancel(F_cancel),.F_result_ready(F_result_ready),
+        .F_read_ready(F_read_ready),.F_read_result_valid(F_read_result_valid),.F_first(F_first),
+        .F_target(F_target),.F_hop_limit(F_hop_limit),.F_start_ready(F_start_ready),
+        .F_result_valid(F_result_valid),.F_eoc(F_eoc),.F_read_valid(F_read_valid),
+        .F_read_abort(F_read_abort),.F_read_result_ready(F_read_result_ready),
+        .F_cluster(F_cluster),.F_hops(F_hops),.F_lba(F_lba),.F_error(F_error),
+        .F_storage_error(F_storage_error),.F_address(F_address)
+    );
     fat32_sector_port u_sector (
         .I_clk(I_clk),
         .I_reset(I_reset),

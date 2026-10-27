@@ -12,17 +12,24 @@ module audio_frame_fifo #(
     input wire I_ready,
     output wire [23:0] O_left, O_right,
     output wire [ADDR_BITS:0] O_write_level, O_read_level,
+    output reg O_write_low,
     output wire O_prefilled, O_need_fill
 );
     wire S_full, S_empty;
     // Preserve all 48 PCM bits and the configured capacity; reserve the small
     // RAM pool for control, display and filesystem buffers.
-    async_fifo #(.DATA_BITS(48),.ADDR_BITS(ADDR_BITS),.USE_BRAM32K(1)) u_fifo (
+    async_fifo #(.DATA_BITS(48),.ADDR_BITS(ADDR_BITS),.USE_BRAM32K(1),.FULL_REGISTER(1)) u_fifo (
         .I_write_clk(I_write_clk),.I_read_clk(I_read_clk),.I_async_reset(I_async_flush),
         .I_write_valid(I_valid),.O_write_ready(O_ready),.I_write_data({I_left,I_right}),
         .O_write_full(S_full),.O_write_level(O_write_level),
         .O_read_valid(O_valid),.I_read_ready(I_ready),.O_read_data({O_left,O_right}),
         .O_read_empty(S_empty),.O_read_level(O_read_level));
+    // Host-side low-water flag. Keeping the level subtraction and comparison
+    // here avoids routing the 12-bit level into the audio state machine.
+    always @(posedge I_write_clk or posedge I_async_flush) begin
+        if(I_async_flush) O_write_low<=1;
+        else O_write_low<=O_write_level<LOW_FRAMES;
+    end
     assign O_prefilled = !I_async_flush && O_valid && O_read_level>=PREFILL_FRAMES;
     assign O_need_fill = !I_async_flush && O_read_level<LOW_FRAMES;
     // synthesis translate_off

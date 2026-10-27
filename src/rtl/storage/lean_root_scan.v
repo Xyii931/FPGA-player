@@ -22,7 +22,17 @@ module lean_root_scan (
     input wire [7:0] I_read_error,
     input wire [3:0] I_storage_error,
     output wire [8:0] O_buffer_address,
-    input wire [7:0] I_buffer_data
+    input wire [7:0] I_buffer_data,
+    // Shared FAT chain walker pass-through.
+    output wire O_walk_start,O_walk_mounted,O_walk_cancel,O_walk_result_ready,
+    output wire O_walk_read_ready,O_walk_read_result_valid,
+    output wire [31:0] O_walk_first,O_walk_target,O_walk_hop_limit,
+    input wire I_walk_start_ready,I_walk_result_valid,I_walk_eoc,
+    input wire [31:0] I_walk_cluster,I_walk_hops,I_walk_read_lba,
+    input wire [7:0] I_walk_error,
+    input wire [3:0] I_walk_storage_error,
+    input wire I_walk_read_valid,I_walk_read_abort,I_walk_read_result_ready,
+    input wire [8:0] I_walk_address
 );
     wire S_byte_valid,S_end;
     wire [7:0] S_byte;
@@ -44,7 +54,17 @@ module lean_root_scan (
         .O_end_valid(S_end),.I_end_ready(I_done_ready && !O_entry_valid),.O_error(O_error),.O_storage_error(),.O_sectors(),
         .O_read_valid(O_read_valid),.I_read_ready(I_read_ready),.O_read_lba(O_read_lba),.O_read_abort(O_read_abort),
         .I_read_result_valid(I_read_result_valid),.O_read_result_ready(O_read_result_ready),.I_read_error(I_read_error),
-        .I_storage_error(I_storage_error),.O_buffer_address(O_buffer_address),.I_buffer_data(I_buffer_data)
+        .I_storage_error(I_storage_error),.O_buffer_address(O_buffer_address),.I_buffer_data(I_buffer_data),
+        .O_walk_start(O_walk_start),.O_walk_mounted(O_walk_mounted),.O_walk_cancel(O_walk_cancel),
+        .O_walk_result_ready(O_walk_result_ready),.O_walk_read_ready(O_walk_read_ready),
+        .O_walk_read_result_valid(O_walk_read_result_valid),.O_walk_first(O_walk_first),
+        .O_walk_target(O_walk_target),.O_walk_hop_limit(O_walk_hop_limit),
+        .I_walk_start_ready(I_walk_start_ready),.I_walk_result_valid(I_walk_result_valid),
+        .I_walk_eoc(I_walk_eoc),.I_walk_cluster(I_walk_cluster),.I_walk_hops(I_walk_hops),
+        .I_walk_read_lba(I_walk_read_lba),.I_walk_error(I_walk_error),
+        .I_walk_storage_error(I_walk_storage_error),.I_walk_read_valid(I_walk_read_valid),
+        .I_walk_read_abort(I_walk_read_abort),.I_walk_read_result_ready(I_walk_read_result_ready),
+        .I_walk_address(I_walk_address)
     );
     always @(posedge I_clk or posedge I_reset) begin
         if(I_reset) begin

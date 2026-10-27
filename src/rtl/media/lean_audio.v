@@ -39,7 +39,7 @@ module lean_audio (
     wire S_parser_ready,S_parser_done,S_parser_error,S_parser_byte_ready;
     wire S_sample,S_sample_ready;
     wire [23:0] S_left,S_right;
-    wire [11:0] S_write_level,S_read_level;
+    wire S_write_low;
     wire S_fifo_valid,S_fifo_ready;
     wire [23:0] S_fifo_left,S_fifo_right;
     wire S_tick;
@@ -66,7 +66,7 @@ module lean_audio (
         .I_write_clk(I_host_clk),.I_read_clk(I_video_clk),.I_async_flush(I_async_reset),
         .I_valid(S_sample),.O_ready(S_sample_ready),.I_left(S_left),.I_right(S_right),
         .O_valid(S_fifo_valid),.I_ready(S_fifo_ready),.O_left(S_fifo_left),.O_right(S_fifo_right),
-        .O_write_level(S_write_level),.O_read_level(S_read_level),
+        .O_write_level(),.O_read_level(),.O_write_low(S_write_low),
         .O_prefilled(), .O_need_fill()
     );
     samp_tick u_tick(.I_clk(I_video_clk),.I_reset(S_vrst),.O_sample_tick(S_tick));
@@ -108,13 +108,13 @@ module lean_audio (
             S_state<=IDLE; O_offset<=0; S_started<=0; S_parser_seen<=0;
             S_decode_failed<=0; O_error<=0; S_size<=0; S_play<=0;
         end else begin
-            if(S_write_level>=512) S_play<=1;
+            if(!S_write_low) S_play<=1;
             if(S_parser_done) begin
                 S_parser_seen<=1;
                 if(S_parser_error) begin S_decode_failed<=1; O_error<=4'd2; end
             end
             case(S_state)
-                IDLE:if(I_catalog_ready && I_audio_found && S_parser_ready && S_write_level<512) begin
+                IDLE:if(I_catalog_ready && I_audio_found && S_parser_ready && S_write_low) begin
                     O_offset<=0; S_started<=0; S_parser_seen<=0; S_decode_failed<=0; O_error<=0;
                     S_state<=REQUEST;
                 end
@@ -132,9 +132,9 @@ module lean_audio (
                     else begin O_offset<=O_offset+I_file_bytes; S_state<=FILL_WAIT; end
                 end
                 FILL_WAIT:if(!I_catalog_ready || S_decode_failed) S_state<=HALT;
-                    else if(S_write_level<512) S_state<=REQUEST;
+                    else if(S_write_low) S_state<=REQUEST;
                 END_WAIT:if(!I_catalog_ready || S_decode_failed) S_state<=HALT;
-                    else if(S_parser_seen && S_parser_ready && S_write_level<512) begin
+                    else if(S_parser_seen && S_parser_ready && S_write_low) begin
                         O_offset<=0; S_started<=0; S_parser_seen<=0; S_state<=REQUEST;
                     end
                 HALT:if(!I_catalog_ready && S_parser_ready) begin

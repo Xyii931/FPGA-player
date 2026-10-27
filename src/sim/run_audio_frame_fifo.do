@@ -13,7 +13,11 @@ vlog -work work [file join $script_dir .. rtl common reset_sync.v]
 vlog -work work [file join $script_dir .. rtl common async_fifo.v]
 vlog -work work [file join $script_dir .. rtl media audio_frame_fifo.v]
 vlog -work work [file join $script_dir tb_audio_frame_fifo.v]
-vsim -voptargs=+acc work.tb_audio_frame_fifo {*}$bram_extra_tops
+if {[llength $bram_extra_tops]} {
+    vsim -voptargs=+acc work.tb_audio_frame_fifo [lindex $bram_extra_tops 0]
+} else {
+    vsim -voptargs=+acc work.tb_audio_frame_fifo
+}
 onfinish stop
 run -all
 if {[examine -radix binary /tb_audio_frame_fifo/S_test_pass] ne "1"} {

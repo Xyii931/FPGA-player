@@ -49,9 +49,10 @@ module sd_sector_reader #(
 );
     localparam [3:0] POWER_WAIT=0,CLOCK_START=1,CLOCK_WAIT=2,COMMAND_SEND=3,COMMAND_WAIT=4,
         SCHEDULE=5,READ_SEND=6,READ_WAIT=7,DELIVER=8,COMPLETE=9,RETRY=10,POLL_DELAY=11,
-        CHECK_REQUEST=12;
+        CHECK_REQUEST=12,CSD_DECODE=13;
     localparam [2:0] INIT_CMD0=0,INIT_CMD8=1,INIT_CMD55=2,INIT_ACMD41=3,INIT_CMD58=4,INIT_CMD16=5,PROBE_CMD13=6,INIT_CMD9=7;
     reg [3:0] S_state,S_complete_error;
+    reg [2:0] S_csd_wait;
     reg [2:0] S_step;
     reg [31:0] S_timer,S_init_age,S_probe_age,S_delivery_age;
     reg S_v2,S_init_budget,S_output_valid;
@@ -81,7 +82,7 @@ module sd_sector_reader #(
     reg S_csd_good;
     wire S_csd_valid;
     wire [32:0] S_capacity_sectors;
-    sd_csd_decode u_csd (.I_csd(S_csd),.I_high_capacity(O_high_capacity),
+    sd_csd_decode_pipe u_csd (.I_clk(I_clk),.I_csd(S_csd),.I_high_capacity(O_high_capacity),
         .O_valid(S_csd_valid),.O_capacity_sectors(S_capacity_sectors));
     wire [31:0] S_ocr={S_response[15:8],S_response[23:16],S_response[31:24],S_response[39:32]};
     wire [32:0] S_request_end={1'b0,I_lba}+{25'd0,I_count}-33'd1;
@@ -190,6 +191,7 @@ module sd_sector_reader #(
     always @(posedge I_clk or posedge I_reset) begin
         if(I_reset) begin
             S_state<=POWER_WAIT; S_step<=INIT_CMD0; S_timer<=0; S_init_age<=0; S_probe_age<=0; S_delivery_age<=0;
+            S_csd_wait<=0;
             S_v2<=0; S_init_budget<=0; S_valid<=0; S_canceled<=0; S_active<=0; S_round_robin<=0;
             S_cancel_pending<=0; S_cancel_context<=0; S_cancel_tag<=0; O_cancel_done_valid<=0;
             S_write_count<=0; S_out_index<=0; S_block_good<=0; S_output_valid<=0; S_complete_error<=0; S_fetch_primed<=0;
@@ -260,12 +262,16 @@ module sd_sector_reader #(
                         end
                         INIT_CMD16: if(S_response[7:0]!=0) lose_card(4'd5);
                             else begin S_step<=INIT_CMD9; S_state<=COMMAND_SEND; S_csd_count<=0; S_csd_good<=0; end
-                        INIT_CMD9: if(S_response[7:0]!=0 || S_csd_count!=16 || !S_csd_good || !S_csd_valid) lose_card(4'd5);
-                            else begin O_capacity_sectors<=S_capacity_sectors; ready_card; end
+                        INIT_CMD9: if(S_response[7:0]!=0 || S_csd_count!=16 || !S_csd_good) lose_card(4'd5);
+                            else begin S_csd_wait<=3'd3; S_state<=CSD_DECODE; end
                         PROBE_CMD13: if(S_response[15:0]!=0) lose_card(4'd5); else S_state<=SCHEDULE;
                         default: lose_card(4'd5);
                     endcase
                 end
+                CSD_DECODE: if(S_csd_wait==0) begin
+                    if(!S_csd_valid) lose_card(4'd5);
+                    else begin O_capacity_sectors<=S_capacity_sectors; ready_card; end
+                end else S_csd_wait<=S_csd_wait-1'b1;
                 POLL_DELAY: if(S_init_age>=INIT_TIMEOUT_CYCLES) lose_card(4'd10);
                     else if(S_timer>=INIT_POLL_CYCLES-1) begin S_step<=INIT_CMD55; S_state<=COMMAND_SEND; S_timer<=0; end
                     else S_timer<=S_timer+32'd1;

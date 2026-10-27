@@ -335,6 +335,7 @@ module tb_fat32_file_reader;
         if(S_requests!=S_before) fail("EOF/out-of-range read accessed storage");
         load_file(1,0,0,0); read_file(1,0,100,0,0,0,16'h0202); wait(S_finished[1]);
         load_file(1,1,10,9); read_file(1,0,10,0,7,0,16'h0203); wait(S_finished[1]);
+        load_file(1,3,68768*512,0); load_file(1,3,68768*512+1,9);
         load_file(1,3,1400,0); S_fat[3]=32'h0fffffff;
         read_file(1,0,1100,512,12,0,16'h0204); wait(S_finished[1]);
         load_file(1,3,1400,0); S_fat[3]=0;

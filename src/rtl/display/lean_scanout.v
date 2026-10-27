@@ -66,13 +66,13 @@ module lean_scanout (
         .O_read_valid(S_commit_valid),.I_read_ready(S_commit_take),.O_read_data(S_commit_data),
         .O_write_full(), .O_write_level(), .O_read_empty(), .O_read_level()
     );
-    async_fifo #(.DATA_BITS(EVENT_BITS),.ADDR_BITS(3)) u_events (
+    async_fifo #(.DATA_BITS(EVENT_BITS),.ADDR_BITS(2)) u_events (
         .I_write_clk(I_video_clk),.I_read_clk(I_host_clk),.I_async_reset(I_async_reset),
         .I_write_valid(S_event_write),.O_write_ready(S_event_wready),.I_write_data(S_event_input),
         .O_read_valid(S_event_valid),.I_read_ready(S_event_take),.O_read_data(S_event_data),
         .O_write_full(), .O_write_level(), .O_read_empty(), .O_read_level()
     );
-    async_fifo #(.DATA_BITS(EVENT_BITS),.ADDR_BITS(3)) u_replies (
+    async_fifo #(.DATA_BITS(EVENT_BITS),.ADDR_BITS(2)) u_replies (
         .I_write_clk(I_host_clk),.I_read_clk(I_video_clk),.I_async_reset(I_async_reset),
         .I_write_valid(S_reply_write),.O_write_ready(S_reply_wready),.I_write_data(S_reply_input),
         .O_read_valid(S_reply_valid),.I_read_ready(1'b1),.O_read_data(S_reply_data),

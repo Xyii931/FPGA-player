@@ -30,23 +30,29 @@ module fat32_mount (
     reg [3:0] S_state;
     reg [8:0] S_scan;
     reg S_partition_sector;
-    reg [2:0] S_partition_index;
     reg [32:0] S_capacity,S_partition_length;
     reg [31:0] S_partition_lba;
     reg [7:0] S_jump,S_spc,S_fats;
     reg [15:0] S_signature,S_bps,S_reserved,S_root_entries,S_total16,S_fat16,S_flags,S_version;
     reg [31:0] S_total32,S_fat_size,S_root_cluster;
-    reg [7:0] S_partition_type[0:3],S_partition_boot[0:3];
-    reg [31:0] S_partition_start[0:3],S_partition_size[0:3];
+    // Only the first FAT32 partition is ever used; keep that candidate instead
+    // of storing all four MBR entries and muxing them later.
+    reg [7:0] S_entry_boot,S_partition_boot;
+    reg [31:0] S_partition_start,S_partition_size;
+    reg S_partition_found;
+    reg [1:0] S_candidate_index;
     wire [8:0] S_partition_offset=S_scan-9'd446;
     wire [1:0] S_entry_index=S_partition_offset[5:4];
-    wire [63:0] S_selected_partition_end={32'd0,S_partition_start[S_partition_index]}+
-        {32'd0,S_partition_size[S_partition_index]};
+    wire [32:0] S_selected_partition_end={1'b0,S_partition_start}+{1'b0,S_partition_size};
     reg S_spc_valid;
     reg [2:0] S_shift;
-    reg [63:0] S_total,S_overhead,S_clusters,S_fat_base,S_data_base,S_volume_end,S_partition_end,S_fat_entries;
-    reg [63:0] S_data_sectors;
-    integer S_i;
+    // Geometry stays in the widths the fields can actually reach: 32-bit
+    // totals, 33/34-bit byte/sector sums, 39-bit FAT entry count. This keeps
+    // the same range checks without 64-bit carry chains.
+    reg [31:0] S_total,S_clusters,S_data_sectors;
+    reg [33:0] S_overhead,S_data_base;
+    reg [32:0] S_fat_base,S_volume_end,S_partition_end;
+    reg [38:0] S_fat_entries;
     assign O_start_ready=!I_reset && S_state==IDLE;
     assign O_result_valid=!I_reset && S_state==RESULT;
     assign O_read_valid=!I_reset && S_state==FETCH && I_card_ready;
@@ -60,8 +66,8 @@ module fat32_mount (
             16:S_shift=4; 32:S_shift=5; 64:S_shift=6; 128:S_shift=7;
             default:S_spc_valid=0;
         endcase
-        S_total=S_total16!=0 ? {48'd0,S_total16} : {32'd0,S_total32};
-        S_fat_entries={32'd0,S_fat_size}<<7;
+        S_total=S_total16!=0 ? {16'd0,S_total16} : S_total32;
+        S_fat_entries={7'd0,S_fat_size}<<7;
     end
     // Mounting is a one-shot operation. Validate the allowed FAT counts before
     // arithmetic, then split geometry over clocks instead of synthesizing two
@@ -69,17 +75,17 @@ module fat32_mount (
     // Scratch values are overwritten before VALIDATE_FINAL; no RAM/data reset.
     always @(posedge I_clk) begin
         if(S_state==GEO_PREP) begin
-            S_overhead<={48'd0,S_reserved}+(S_fats==2 ? {31'd0,S_fat_size,1'b0} : {32'd0,S_fat_size});
-            S_fat_base<={32'd0,S_partition_lba}+{48'd0,S_reserved};
+            S_overhead<={18'd0,S_reserved}+(S_fats==2 ? {1'b0,S_fat_size,1'b0} : {1'b0,S_fat_size});
+            S_fat_base<={1'b0,S_partition_lba}+{17'd0,S_reserved};
         end
         if(S_state==GEO_BASES) begin
-            S_data_base<={32'd0,S_partition_lba}+S_overhead;
-            S_volume_end<={32'd0,S_partition_lba}+S_total;
-            S_partition_end<={32'd0,S_partition_lba}+{31'd0,S_partition_length};
+            S_data_base<={1'b0,S_partition_lba}+S_overhead;
+            S_volume_end<={1'b0,S_partition_lba}+{1'b0,S_total};
+            S_partition_end<={1'b0,S_partition_lba}+S_partition_length;
             // Flags can select only FAT0 or FAT1 after structural validation.
-            S_fat_base<=S_fat_base+((S_flags[7] && S_flags[0]) ? {32'd0,S_fat_size} : 64'd0);
+            S_fat_base<=S_fat_base+((S_flags[7] && S_flags[0]) ? {1'b0,S_fat_size} : 33'd0);
         end
-        if(S_state==GEO_SUB) S_data_sectors<=S_total>S_overhead ? S_total-S_overhead : 64'd0;
+        if(S_state==GEO_SUB) S_data_sectors<=S_total>{1'b0,S_overhead} ? S_total-S_overhead : 32'd0;
         if(S_state==GEO_CLUSTERS) S_clusters<=S_data_sectors>>S_shift;
     end
     task clear_fields;
@@ -87,10 +93,8 @@ module fat32_mount (
             S_jump<=0; S_signature<=0; S_bps<=0; S_spc<=0; S_reserved<=0;
             S_fats<=0; S_root_entries<=0; S_total16<=0; S_fat16<=0;
             S_total32<=0; S_fat_size<=0; S_flags<=0; S_version<=0; S_root_cluster<=0;
-            for(S_i=0;S_i<4;S_i=S_i+1) begin
-                S_partition_type[S_i]<=0; S_partition_boot[S_i]<=0;
-                S_partition_start[S_i]<=0; S_partition_size[S_i]<=0;
-            end
+            S_entry_boot<=0; S_partition_boot<=0; S_partition_start<=0;
+            S_partition_size<=0; S_partition_found<=0; S_candidate_index<=0;
         end
     endtask
     task finish;
@@ -99,7 +103,7 @@ module fat32_mount (
     endtask
     always @(posedge I_clk or posedge I_reset) begin
         if(I_reset) begin
-            S_state<=IDLE; S_scan<=0; S_partition_sector<=0; S_partition_index<=0;
+            S_state<=IDLE; S_scan<=0; S_partition_sector<=0;
             S_capacity<=0; S_partition_length<=0; S_partition_lba<=0;
             O_error<=0; O_storage_error<=0; O_mounted<=0; O_read_lba<=0;
             O_partition_lba<=0; O_volume_sectors<=0; O_fat_lba<=0; O_data_lba<=0;
@@ -143,10 +147,16 @@ module fat32_mount (
                     endcase
                     if(S_scan>=446 && S_scan<=509) begin
                         case(S_partition_offset[3:0])
-                            0:S_partition_boot[S_entry_index]<=I_buffer_data;
-                            4:S_partition_type[S_entry_index]<=I_buffer_data;
-                            8,9,10,11:S_partition_start[S_entry_index][(S_partition_offset[3:0]-8)*8+:8]<=I_buffer_data;
-                            12,13,14,15:S_partition_size[S_entry_index][(S_partition_offset[3:0]-12)*8+:8]<=I_buffer_data;
+                            0:S_entry_boot<=I_buffer_data;
+                            4:if(!S_partition_found && (I_buffer_data==8'h0b || I_buffer_data==8'h0c ||
+                                I_buffer_data==8'h1b || I_buffer_data==8'h1c)) begin
+                                S_partition_found<=1; S_partition_boot<=S_entry_boot;
+                                S_candidate_index<=S_entry_index;
+                            end
+                            8,9,10,11:if(S_partition_found && S_entry_index==S_candidate_index)
+                                S_partition_start[(S_partition_offset[3:0]-8)*8+:8]<=I_buffer_data;
+                            12,13,14,15:if(S_partition_found && S_entry_index==S_candidate_index)
+                                S_partition_size[(S_partition_offset[3:0]-12)*8+:8]<=I_buffer_data;
                             default:begin end
                         endcase
                     end
@@ -158,23 +168,19 @@ module fat32_mount (
                     else if(S_bps==512 || ((S_jump==8'heb || S_jump==8'he9) &&
                         S_reserved!=0 && S_fats!=0 && S_fat_size!=0 && S_root_entries==0 && S_fat16==0))
                         S_state<=VALIDATE;
-                    else begin S_partition_index<=0; S_state<=SELECT_PARTITION; end
+                    else S_state<=SELECT_PARTITION;
                 end
                 SELECT_PARTITION: begin
-                    if(S_partition_index==4) finish(8'd4);
-                    else if(S_partition_type[S_partition_index]==8'h0b || S_partition_type[S_partition_index]==8'h0c ||
-                        S_partition_type[S_partition_index]==8'h1b || S_partition_type[S_partition_index]==8'h1c) begin
-                        if((S_partition_boot[S_partition_index]!=0 && S_partition_boot[S_partition_index]!=8'h80) ||
-                            S_partition_start[S_partition_index]==0 || S_partition_size[S_partition_index]==0 ||
-                            S_selected_partition_end>{31'd0,S_capacity})
-                            finish(8'd5);
-                        else begin
-                            S_partition_lba<=S_partition_start[S_partition_index];
-                            S_partition_length<={1'b0,S_partition_size[S_partition_index]};
-                            O_read_lba<=S_partition_start[S_partition_index];
-                            S_partition_sector<=1; S_state<=FETCH;
-                        end
-                    end else S_partition_index<=S_partition_index+3'd1;
+                    if(!S_partition_found) finish(8'd4);
+                    else if((S_partition_boot!=0 && S_partition_boot!=8'h80) ||
+                        S_partition_start==0 || S_partition_size==0 ||
+                        S_selected_partition_end>{31'd0,S_capacity}) finish(8'd5);
+                    else begin
+                        S_partition_lba<=S_partition_start;
+                        S_partition_length<={1'b0,S_partition_size};
+                        O_read_lba<=S_partition_start;
+                        S_partition_sector<=1; S_state<=FETCH;
+                    end
                 end
                 VALIDATE: begin
                     if(S_signature!=16'haa55 || (S_jump!=8'heb && S_jump!=8'he9) || S_bps!=512 ||
@@ -188,12 +194,13 @@ module fat32_mount (
                 GEO_SUB:S_state<=GEO_CLUSTERS;
                 GEO_CLUSTERS:S_state<=VALIDATE_FINAL;
                 VALIDATE_FINAL: begin
-                    if(S_total<=S_overhead ||
-                        S_clusters<65525 || S_clusters>64'h0fffffee || S_fat_entries<S_clusters+2 ||
-                        S_root_cluster<2 || {32'd0,S_root_cluster}>S_clusters+1) finish(8'd6);
-                    else if(S_total>{31'd0,S_partition_length} || S_volume_end>{31'd0,S_capacity} ||
-                        S_partition_end>{31'd0,S_capacity} || S_volume_end>64'h100000000 ||
-                        S_fat_base>64'hffffffff || S_data_base>64'hffffffff) finish(8'd5);
+                    if(S_total<={1'b0,S_overhead} ||
+                        S_clusters<16'd65525 || S_clusters>32'h0fffffee ||
+                        S_fat_entries<{7'd0,S_clusters}+39'd2 ||
+                        S_root_cluster<2 || {7'd0,S_root_cluster}>{7'd0,S_clusters}+39'd1) finish(8'd6);
+                    else if({1'b0,S_total}>S_partition_length || S_volume_end>S_capacity ||
+                        S_partition_end>S_capacity || S_volume_end>33'h100000000 ||
+                        S_fat_base>33'h0ffffffff || S_data_base>34'h0ffffffff) finish(8'd5);
                     else begin
                         O_partition_lba<=S_partition_lba; O_volume_sectors<=S_total[31:0];
                         O_fat_lba<=S_fat_base[31:0]; O_data_lba<=S_data_base[31:0];

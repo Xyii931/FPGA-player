@@ -2,6 +2,7 @@
 /.local/
 /AGENTS.md
 /src/sim/build/
+/src/sim/.runner_*.do
 /transcript
 /reference/**/*_Runs/
 /reference/**/log/

@@ -1,7 +1,7 @@
 // Host-domain stable input levels and release events. Independent bit debounce.
 // KEY1 long hold globally resets this domain; no PREV is emitted on its release.
 module board_inputs #(
-    parameter integer DEBOUNCE_CYCLES=2500000
+    parameter integer DEBOUNCE_CYCLES=2000000
 ) (
     input wire I_clk,I_reset,
     input wire [3:0] I_key_n,I_switch,

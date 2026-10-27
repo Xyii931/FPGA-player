@@ -57,11 +57,21 @@ module fat32_file_reader #(
     input wire [7:0] I_sector_error,
     input wire [3:0] I_sector_storage_error,
     output wire [8:0] O_buffer_address,
-    input wire [7:0] I_buffer_data
+    input wire [7:0] I_buffer_data,
+    // Shared FAT chain walker interface (owned by lean_media_source).
+    output wire O_walk_start,O_walk_mounted,O_walk_cancel,O_walk_result_ready,
+    output wire O_walk_read_ready,O_walk_read_result_valid,
+    output wire [31:0] O_walk_first,O_walk_target,O_walk_hop_limit,
+    input wire I_walk_start_ready,I_walk_result_valid,I_walk_eoc,
+    input wire [31:0] I_walk_cluster,I_walk_hops,I_walk_read_lba,
+    input wire [7:0] I_walk_error,
+    input wire [3:0] I_walk_storage_error,
+    input wire I_walk_read_valid,I_walk_read_abort,I_walk_read_result_ready,
+    input wire [8:0] I_walk_address
 );
     localparam [3:0] SCHEDULE=0,PREPARE=1,WALK_START=2,WALK_WAIT=3,
         DATA_SEND=4,DATA_WAIT=5,DATA_ADDRESS=6,DATA_LATCH=7,DATA_OUT=8,COMPLETE=9,
-        ADDRESS_SUM=10,ADDRESS_CHECK=11;
+        ADDRESS_SUM=10,ADDRESS_CHECK=11,WALK_UPDATE=12;
     reg [3:0] S_state;
     reg [7:0] S_complete_error;
     reg [CONTEXTS-1:0] S_open,S_pending,S_terminal,S_canceled,S_lost;
@@ -84,24 +94,43 @@ module fat32_file_reader #(
     reg [31:0] S_target_index;
     reg [31:0] S_walk_first,S_walk_target,S_walk_base_index;
     wire S_walk_owner=S_state==WALK_START || S_state==WALK_WAIT;
-    wire S_walk_ready,S_walk_result_valid,S_walk_eoc;
-    wire [31:0] S_walk_cluster,S_walk_hops,S_walk_lba;
-    wire [7:0] S_walk_error;
-    wire [3:0] S_walk_storage_error;
-    wire S_walk_read_valid,S_walk_read_abort,S_walk_read_result_ready;
-    wire [8:0] S_walk_address;
+    wire S_walk_ready=I_walk_start_ready;
+    wire S_walk_result_valid=I_walk_result_valid;
+    wire S_walk_eoc=I_walk_eoc;
+    wire [31:0] S_walk_cluster=I_walk_cluster;
+    wire [31:0] S_walk_hops=I_walk_hops;
+    wire [31:0] S_walk_lba=I_walk_read_lba;
+    wire [7:0] S_walk_error=I_walk_error;
+    wire [3:0] S_walk_storage_error=I_walk_storage_error;
+    wire S_walk_read_valid=I_walk_read_valid;
+    wire S_walk_read_abort=I_walk_read_abort;
+    wire S_walk_read_result_ready=I_walk_read_result_ready;
+    wire [8:0] S_walk_address=I_walk_address;
     wire [31:0] S_sector_in_cluster=(S_cursor[S_active]>>9)&((32'd1<<I_cluster_shift)-32'd1);
     reg [63:0] S_cluster_offset,S_data_address,S_volume_data_end;
-    wire [63:0] S_file_capacity={32'd0,I_cluster_count}<<(5'd9+{2'd0,I_cluster_shift});
-    wire S_load_bad=I_load_context>=CONTEXTS || I_cluster_count==0 || I_cluster_count>32'h0fffffee ||
-        {32'd0,I_file_size}>S_file_capacity ||
-        (I_file_size!=0 && (I_first_cluster<2 || I_first_cluster>I_cluster_count+32'd1)) ||
-        (I_file_size==0 && I_first_cluster!=0 && (I_first_cluster<2 || I_first_cluster>I_cluster_count+32'd1));
+    // Mount outputs feed the shift/compare only through captured registers.
+    // Driving the per-context table enables combinationally made cluster_count
+    // the source of the ten worst timing paths at 125 MHz.
+    localparam [1:0] LC_IDLE=0,LC_CHECK=1,LC_PUBLISH=2;
+    reg [1:0] S_load_check;
+    reg [1:0] S_load_q_context;
+    // Capture the descriptor with the mount geometry so the check never
+    // reaches across the chip to live inputs.
+    reg [31:0] S_load_q_first,S_load_q_size,S_load_q_clusters;
+    reg [2:0] S_load_q_shift;
+    reg S_load_q_bad;
+    // file_size > clusters<<(9+shift) is equivalent to
+    // (file_size-1)>>(9+shift) >= clusters for non-empty files. Shifting the
+    // 32-bit size right is much smaller than a 48-bit left shifter.
+    wire [31:0] S_load_last_byte=S_load_q_size-32'd1;
+    wire [22:0] S_load_last_scaled=S_load_last_byte[31:9]>>S_load_q_shift;
+    wire [32:0] S_load_limit_c={1'b0,S_load_q_clusters}+33'd1;
 
     assign O_cancel_ready=!I_reset && !S_cancel_pending && !O_cancel_done_valid;
     assign O_close_ready=!I_reset && I_close_context<CONTEXTS && !S_pending[I_close_context] &&
         !S_terminal[I_close_context] && !I_cancel_valid;
-    assign O_load_ready=!I_reset && I_mounted && (!O_load_result_valid || I_load_result_ready) &&
+    assign O_load_ready=!I_reset && I_mounted && S_load_check==LC_IDLE &&
+        (!O_load_result_valid || I_load_result_ready) &&
         (I_load_context>=CONTEXTS || (!S_pending[I_load_context] && !S_terminal[I_load_context])) &&
         !I_close_valid && !I_cancel_valid;
     assign O_read_ready=!I_reset && I_mounted && I_read_context<CONTEXTS && !S_pending[I_read_context] &&
@@ -123,16 +152,15 @@ module fat32_file_reader #(
         (S_state==DATA_WAIT && (S_stop || S_lost_active));
     assign O_sector_result_ready=S_walk_owner ? S_walk_read_result_ready : (!I_reset && S_state==DATA_WAIT);
     assign O_buffer_address=S_walk_owner ? S_walk_address : S_cursor[S_active][8:0];
-    fat32_chain_walk u_walk (
-        .I_clk(I_clk),.I_reset(I_reset),.I_mounted(I_mounted && !S_lost[S_active]),
-        .I_fat_lba(I_fat_lba),.I_cluster_count(I_cluster_count),
-        .I_start_valid(S_state==WALK_START && !S_stop && !S_lost_active),.O_start_ready(S_walk_ready),
-        .I_first_cluster(S_walk_first),.I_target_index(S_walk_target),.I_hop_limit(I_cluster_count),.I_cancel(S_stop),
-        .O_result_valid(S_walk_result_valid),.I_result_ready(S_state==WALK_WAIT),
-        .O_cluster(S_walk_cluster),.O_hops(S_walk_hops),.O_eoc(S_walk_eoc),.O_error(S_walk_error),.O_storage_error(S_walk_storage_error),
-        .O_read_valid(S_walk_read_valid),.I_read_ready(I_sector_ready && S_walk_owner),.O_read_lba(S_walk_lba),.O_read_abort(S_walk_read_abort),
-        .I_read_result_valid(I_sector_result_valid && S_walk_owner),.O_read_result_ready(S_walk_read_result_ready),
-        .I_read_error(I_sector_error),.I_storage_error(I_sector_storage_error),.O_buffer_address(S_walk_address),.I_buffer_data(I_buffer_data));
+    assign O_walk_start=S_state==WALK_START && !S_stop && !S_lost_active;
+    assign O_walk_mounted=I_mounted && !S_lost[S_active];
+    assign O_walk_cancel=S_stop;
+    assign O_walk_first=S_walk_first;
+    assign O_walk_target=S_walk_target;
+    assign O_walk_hop_limit=I_cluster_count;
+    assign O_walk_result_ready=S_state==WALK_WAIT;
+    assign O_walk_read_ready=I_sector_ready && S_walk_owner;
+    assign O_walk_read_result_valid=I_sector_result_valid && S_walk_owner;
 
     always @* begin
         S_pick_found=0; S_pick=0; S_best=0; S_score=0; S_candidate=0;
@@ -162,6 +190,9 @@ module fat32_file_reader #(
             S_active<=0; S_rr<=0; S_cancel_pending<=0; S_cancel_context<=0; S_cancel_epoch<=0;
             S_walk_first<=0; S_walk_target<=0; S_walk_base_index<=0;
             S_target_index<=0; S_cluster_offset<=0; S_data_address<=0; S_volume_data_end<=0;
+            S_load_check<=LC_IDLE; S_load_q_context<=0;
+            S_load_q_first<=0; S_load_q_size<=0; S_load_q_clusters<=0;
+            S_load_q_shift<=0; S_load_q_bad<=0;
             O_load_result_valid<=0; O_load_context<=0; O_load_error<=0; O_byte_data<=0;
             O_done_valid<=0; O_done_context<=0; O_done_epoch<=0; O_done_bytes<=0; O_done_eof<=0;
             O_done_error<=0; O_done_storage_error<=0; O_cancel_done_valid<=0;
@@ -175,16 +206,36 @@ module fat32_file_reader #(
         end else begin
             if(O_load_result_valid && I_load_result_ready) O_load_result_valid<=0;
             if(I_load_valid && O_load_ready) begin
-                O_load_result_valid<=1; O_load_context<=I_load_context; O_load_error<=S_load_bad ? 8'd9 : 8'd0;
-                if(I_load_context<CONTEXTS) begin
-                    S_open[I_load_context]<=!S_load_bad;
-                    if(!S_load_bad) begin
-                        S_first[I_load_context]<=I_first_cluster; S_size[I_load_context]<=I_file_size;
-                        S_checkpoint[I_load_context]<=I_first_cluster; S_checkpoint_index[I_load_context]<=0;
-                        S_tortoise[I_load_context]<=I_first_cluster; S_power[I_load_context]<=1; S_lam[I_load_context]<=0;
-                    end
-                end
+                S_load_q_context<=I_load_context; S_load_q_first<=I_first_cluster;
+                S_load_q_size<=I_file_size; S_load_q_clusters<=I_cluster_count;
+                S_load_q_shift<=I_cluster_shift; S_load_check<=LC_CHECK;
             end
+            case(S_load_check)
+                LC_CHECK: begin
+                    S_load_q_bad<=S_load_q_context>=CONTEXTS || S_load_q_clusters==0 ||
+                        S_load_q_clusters>32'h0fffffee ||
+                        (S_load_q_size!=0 && S_load_last_scaled>=S_load_q_clusters) ||
+                        (S_load_q_size!=0 && (S_load_q_first<2 ||
+                            {1'b0,S_load_q_first}>S_load_limit_c)) ||
+                        (S_load_q_size==0 && S_load_q_first!=0 &&
+                            (S_load_q_first<2 || {1'b0,S_load_q_first}>S_load_limit_c));
+                    S_load_check<=LC_PUBLISH;
+                end
+                LC_PUBLISH: begin
+                    O_load_result_valid<=1; O_load_context<=S_load_q_context;
+                    O_load_error<=S_load_q_bad ? 8'd9 : 8'd0;
+                    if(S_load_q_context<CONTEXTS) begin
+                        S_open[S_load_q_context]<=!S_load_q_bad;
+                        if(!S_load_q_bad) begin
+                            S_first[S_load_q_context]<=S_load_q_first; S_size[S_load_q_context]<=S_load_q_size;
+                            S_checkpoint[S_load_q_context]<=S_load_q_first; S_checkpoint_index[S_load_q_context]<=0;
+                            S_tortoise[S_load_q_context]<=S_load_q_first; S_power[S_load_q_context]<=1; S_lam[S_load_q_context]<=0;
+                        end
+                    end
+                    S_load_check<=LC_IDLE;
+                end
+                default: begin end
+            endcase
             if(I_close_valid && O_close_ready) S_open[I_close_context]<=0;
             if(I_read_valid && O_read_ready) begin
                 S_pending[I_read_context]<=1; S_canceled[I_read_context]<=0; S_lost[I_read_context]<=0;
@@ -277,13 +328,18 @@ module fat32_file_reader #(
                     else if(S_walk_target==1 && (S_walk_cluster==S_tortoise[S_active] || S_walk_cluster==S_first[S_active])) complete(8'd9);
                     else begin
                         S_checkpoint[S_active]<=S_walk_cluster; S_checkpoint_index[S_active]<=S_walk_base_index+S_walk_hops;
-                        if(S_walk_target==1) begin
-                            if(S_lam[S_active]+32'd1==S_power[S_active]) begin
-                                S_tortoise[S_active]<=S_walk_cluster; S_power[S_active]<=S_power[S_active]<<1; S_lam[S_active]<=0;
-                            end else S_lam[S_active]<=S_lam[S_active]+32'd1;
-                        end else begin S_tortoise[S_active]<=S_walk_cluster; S_power[S_active]<=1; S_lam[S_active]<=0; end
-                        S_state<=PREPARE;
+                        S_state<=WALK_UPDATE;
                     end
+                end
+                WALK_UPDATE: begin
+                    // Separate cycle: checkpoint-index arithmetic must not feed
+                    // the tortoise/power table enables through a shared cone.
+                    if(S_walk_target==1) begin
+                        if(S_lam[S_active]+32'd1==S_power[S_active]) begin
+                            S_tortoise[S_active]<=S_walk_cluster; S_power[S_active]<=S_power[S_active]<<1; S_lam[S_active]<=0;
+                        end else S_lam[S_active]<=S_lam[S_active]+32'd1;
+                    end else begin S_tortoise[S_active]<=S_walk_cluster; S_power[S_active]<=1; S_lam[S_active]<=0; end
+                    S_state<=PREPARE;
                 end
                 DATA_SEND: if(S_lost_active) complete(8'd1);
                     else if(S_stop) complete(8'd8);

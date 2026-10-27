@@ -18,7 +18,11 @@ vlog -work work [file join $script_dir .. rtl storage lean_frame_memory.v]
 source [file join $script_dir load_player_bram.do]
 vlog -work work [file join $script_dir models sim_sdr_device.v]
 vlog -work work [file join $script_dir tb_lean_video.v]
-vsim -voptargs=+acc work.tb_lean_video {*}$bram_extra_tops
+if {[llength $bram_extra_tops]} {
+    vsim -voptargs=+acc work.tb_lean_video [lindex $bram_extra_tops 0]
+} else {
+    vsim -voptargs=+acc work.tb_lean_video
+}
 onfinish stop
 run -all
 if {[examine -radix binary /tb_lean_video/S_test_pass] ne "1"} {quit -force -code 1}

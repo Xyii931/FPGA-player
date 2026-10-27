@@ -85,6 +85,13 @@ if {[catch {
         puts "PLAYER_TD_STAGE place"
         set step place
         load_run_param -run phy_1
+        if {[info exists ::env(FPGA_PLAYER_SEED)]} {
+            set_param flow enable_seed on
+            set_param -run phy_1 place seed $::env(FPGA_PLAYER_SEED)
+        }
+        if {[info exists ::env(FPGA_PLAYER_PR_STRATEGY)]} {
+            set_param -run phy_1 place pr_strategy $::env(FPGA_PLAYER_PR_STRATEGY)
+        }
         commit_param -step place
         place
         update_timing -mode manhattan
@@ -93,6 +100,10 @@ if {[catch {
         puts "PLAYER_TD_STAGE route"
         set step route
         commit_param -step route
+        if {[info exists ::env(FPGA_PLAYER_ROUTE_MULTITRY)] &&
+            $::env(FPGA_PLAYER_ROUTE_MULTITRY) eq "1"} {
+            set_param route multi_try_route_bad_qor_check off
+        }
         route
         update_timing -mode final
         report_area -io_info -file ${run_name}_phy.area

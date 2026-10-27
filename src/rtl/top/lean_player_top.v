@@ -62,7 +62,7 @@ module lean_player_top (
     wire [15:0] S_tag,S_byte_tag,S_done_tag,S_cancel_tag,S_cancel_done_tag;
     wire [3:0] S_sd_error;
     sd_storage u_storage (
-        .I_host_clk(S_clk125),.I_sd_clk(S_clk100),.I_async_reset(S_common_reset),
+        .I_host_clk(S_clk125),.I_sd_clk(S_clk100),.I_async_reset(S_host_reset),
         .I_request_valid(S_request),.O_request_ready(S_request_ready),.I_lba(S_lba),.I_count(S_count),
         .I_context(S_context),.I_priority(S_priority),.I_tag(S_tag),.I_urgent_context(3'd0),
         .O_byte_valid(S_byte_valid),.I_byte_ready(S_byte_ready),.O_byte_data(S_byte),
@@ -107,7 +107,7 @@ module lean_player_top (
     wire [3:0] S_current,S_error;
     wire [4:0] S_images;
     lean_player_core u_player (
-        .I_host_clk(S_clk125),.I_video_clk(S_clk25),.I_async_reset(S_common_reset),.I_key_release(S_key_release),
+        .I_host_clk(S_clk125),.I_video_clk(S_clk25),.I_async_reset(S_host_reset),.I_key_release(S_key_release),
         .I_rx_valid(S_rx_valid),.I_rx_error(S_rx_error),.I_rx_data(S_rx_data),
         .O_tx_valid(S_tx_valid),.I_tx_ready(S_tx_ready),.O_tx_data(S_tx_data),
         .I_card_ready(S_card),.I_capacity_sectors(S_capacity),

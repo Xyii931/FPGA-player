@@ -4,7 +4,8 @@ param(
     [string]$VsimPath = 'D:/altera/14.1/modelsim_ase/win32aloem/vsim.exe',
     [ValidateSet('P0', 'Media', 'Storage', 'Lean', 'All')]
     [string]$Suite = 'Lean',
-    [string[]]$Case = @()
+    [string[]]$Case = @(),
+    [switch]$NoVopt
 )
 $ErrorActionPreference = 'Stop'
 if (-not (Test-Path -LiteralPath $VsimPath -PathType Leaf)) {
@@ -69,12 +70,28 @@ try {
         $started = Get-Date
         $exitCode = -1
         $errorText = $null
+        $wrapperPath = Join-Path $simDir ".runner_${caseName}_$runId.wrap.do"
+        $caseRunnerPath = Join-Path $simDir ".runner_${caseName}_$runId.do"
+        $sourceRel = "src/sim/run_$caseName.do"
         Write-Host "Running $caseName ..."
         try {
-            # Tcl source sets [info script] correctly; ModelSim do does not.
-            # Catch source errors explicitly: onerror only handles ModelSim macros.
-            $simCommand = 'if {[catch {source src/sim/run_' + $caseName +
-                '.do} detail]} {puts stderr $detail; quit -force -code 1}'
+            if ($NoVopt) {
+                # ModelSim 10.1c hangs in its automatic vopt step; -novopt runs.
+                $caseText = Get-Content -LiteralPath (Join-Path $simDir "run_$caseName.do") -Raw
+                $caseText = $caseText.Replace('-voptargs=+acc', '-novopt')
+                Set-Content -LiteralPath $caseRunnerPath -Value $caseText -NoNewline -Encoding ASCII
+                $sourceRel = "src/sim/.runner_${caseName}_$runId.do"
+            }
+            # A wrapper file keeps vsim's -do command to a simple `source`.
+            # ModelSim 10.1c rejects the inline catch/source command.
+            $wrapperLines = @(
+                ('if {[catch {source "' + $sourceRel + '"} detail]} {'),
+                '    puts stderr $detail',
+                '    quit -force -code 1',
+                '}'
+            )
+            Set-Content -LiteralPath $wrapperPath -Value $wrapperLines -Encoding ASCII
+            $simCommand = "source src/sim/.runner_${caseName}_$runId.wrap.do"
             # Keep native stderr separate: Windows PowerShell must not convert a
             # tool's diagnostic line into a terminating PowerShell exception.
             $process = Start-Process -FilePath $VsimPath -WorkingDirectory $simRepoDir `
@@ -85,23 +102,40 @@ try {
         } catch {
             $errorText = $_.Exception.Message
             Add-Content -LiteralPath $consoleLog -Value $errorText
+        } finally {
+            Remove-Item -LiteralPath $caseRunnerPath, $wrapperPath -Force -ErrorAction SilentlyContinue
         }
         $archivedLog = $null
+        $transcriptFresh = $false
         # Do not attach a stale transcript from a previous run if startup failed.
         if (Test-Path -LiteralPath $caseLog) {
             if ((Get-Item -LiteralPath $caseLog).LastWriteTime -ge $started) {
                 $archivedLog = Join-Path $resultDir "$caseName.log"
                 Copy-Item -LiteralPath $caseLog -Destination $archivedLog
+                $transcriptFresh = $true
             }
         }
+        $hasPass = $false
+        $harnessFailure = $false
+        if ($transcriptFresh) {
+            $hasPass = Select-String -LiteralPath $caseLog -Pattern '^#\s*PASS' -Quiet
+            $harnessFailure = Select-String -LiteralPath $caseLog -Quiet -Pattern `
+                'Startup command is not a complete Tcl command|syntax error|Failed to find design unit|Error loading design'
+        }
+        if ($null -eq $errorText -and $exitCode -ne 0) { $errorText = "vsim exited with code $exitCode" }
+        if ($null -eq $errorText -and -not $transcriptFresh) { $errorText = 'Transcript missing or not refreshed by this run' }
+        if ($null -eq $errorText -and -not $hasPass) { $errorText = 'Transcript has no PASS marker' }
+        if ($null -eq $errorText -and $harnessFailure) { $errorText = 'Transcript contains a harness error' }
+        $casePassed = ($exitCode -eq 0) -and $transcriptFresh -and $hasPass -and (-not $harnessFailure)
         $results += [pscustomobject]@{
             Case = $caseName
-            Passed = ($exitCode -eq 0)
+            Passed = $casePassed
             ExitCode = $exitCode
             Seconds = [math]::Round(((Get-Date) - $started).TotalSeconds, 2)
             Transcript = $archivedLog
             ConsoleLog = $consoleLog
             StderrLog = $stderrLog
+            NoVopt = [bool]$NoVopt
             Error = $errorText
         }
     }

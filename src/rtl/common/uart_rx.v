@@ -1,6 +1,6 @@
 // UART 8N1. One-cycle valid/error pulses; no wire-level flow control.
 module uart_rx #(
-    parameter integer CLOCK_HZ=125000000,BAUD=115200
+    parameter integer CLOCK_HZ=100000000,BAUD=115200
 ) (
     input wire I_clk,I_reset,I_rx,
     output reg O_valid,O_frame_error,

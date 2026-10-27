@@ -32,7 +32,11 @@ vlog -work work [file join $script_dir .. rtl top lean_player_ctrl.v]
 source [file join $script_dir load_player_bram.do]
 vlog -work work [file join $script_dir models sim_lean_media_card.v]
 vlog -work work [file join $script_dir tb_lean_player_core.v]
-vsim -voptargs=+acc work.tb_lean_player_core {*}$bram_extra_tops
+if {[llength $bram_extra_tops]} {
+    vsim -voptargs=+acc work.tb_lean_player_core [lindex $bram_extra_tops 0]
+} else {
+    vsim -voptargs=+acc work.tb_lean_player_core
+}
 onfinish stop
 run -all
 if {[examine -radix binary /tb_lean_player_core/S_test_pass] ne "1"} {quit -force -code 1}

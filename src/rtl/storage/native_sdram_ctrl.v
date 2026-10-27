@@ -3,7 +3,8 @@
 // I_clk_sft must be the related 180-degree shifted clock, NOT an asynchronous clock.
 module native_sdram_ctrl #(
     parameter integer INIT_CYCLES=25000,
-    parameter integer REFRESH_CYCLES=975,
+    // 781 * 10 ns = 7.81 us at the 100 MHz host/SDRAM clock.
+    parameter integer REFRESH_CYCLES=781,
     parameter integer CAS_LATENCY=3,
     parameter integer T_RP=3,T_RCD=3,T_RFC=10,T_RAS=6,T_RC=9,
     parameter integer T_RRD=2,T_WR=3,T_WTR=2,T_MRD=2,
@@ -52,10 +53,18 @@ module native_sdram_ctrl #(
     reg [SLOT_BITS-1:0] S_read_slot[0:READ_DELAY-1],S_write_slot[0:WRITE_DELAY-1];
     reg [31:0] S_read_sample,S_dq_data;
     reg S_dq_drive;
+    // WRITE data is driven one clk cycle before the WRITE command, so the
+    // device sees the 5 ns DQ setup at 100 MHz/180 degrees.
+    reg S_wr_pending;
+    reg [1:0] S_wr_bank;
+    reg [7:0] S_wr_col;
+    reg [3:0] S_wr_mask;
+    reg [SLOT_BITS-1:0] S_wr_slot;
     // Related-clock path, intentionally NOT an asynchronous bit synchronizer.
     // Every command interval must contain its actual shifted/device clock edge.
     reg [3:0] S_shift_edges,S_previous_edges;
     reg S_phase_armed;
+    reg S_phase_fault_q;
     wire [3:0] S_expected_edges=S_previous_edges+4'd1;
     wire S_phase_fault=S_phase_armed && S_shift_edges!=S_expected_edges;
     integer S_i;
@@ -73,7 +82,7 @@ module native_sdram_ctrl #(
         S_precharge_wait[0]==0 && S_precharge_wait[1]==0 &&
         S_precharge_wait[2]==0 && S_precharge_wait[3]==0;
     assign O_cmd_ready=!I_reset && !O_clock_fault && O_initialized && S_state==RUN && !S_refresh_due &&
-        S_capacity && S_row_hit && S_turn_ok;
+        S_capacity && S_row_hit && S_turn_ok && !S_wr_pending;
     assign O_result_valid=!I_reset && !O_clock_fault && S_count!=0 && S_complete[S_head];
     assign {O_result_wr,O_result_data,O_result_tag}={S_wr[S_head],S_data[S_head],S_tags[S_head]};
     // This SDR device has no per-word error acknowledgement or ECC.
@@ -102,7 +111,8 @@ module native_sdram_ctrl #(
             S_activate_gap<=0; S_read_gap<=0; S_write_gap<=0; S_init_refresh<=0; S_open<=0;
             S_head<=0; S_tail<=0; S_count<=0; S_read_pipe<=0; S_write_pipe<=0;
             S_dq_data<=0; S_dq_drive<=0; O_initialized<=0; O_refresh_pulse<=0;
-            S_previous_edges<=0; S_phase_armed<=0; O_clock_fault<=0;
+            S_wr_pending<=0; S_wr_bank<=0; S_wr_col<=0; S_wr_mask<=0; S_wr_slot<=0;
+            S_previous_edges<=0; S_phase_armed<=0; S_phase_fault_q<=0; O_clock_fault<=0;
             O_sdram_cke<=0; O_sdram_ras_n<=1; O_sdram_cas_n<=1; O_sdram_we_n<=1;
             O_sdram_addr<=0; O_sdram_ba<=0; O_sdram_dm<=15;
             for(S_i=0;S_i<4;S_i=S_i+1) begin
@@ -118,6 +128,7 @@ module native_sdram_ctrl #(
             {O_sdram_ras_n,O_sdram_cas_n,O_sdram_we_n}<=3'b111;
             O_sdram_addr<=0; O_sdram_ba<=0; O_sdram_dm<=15; S_dq_drive<=0; O_refresh_pulse<=0;
             S_previous_edges<=S_shift_edges;
+            S_phase_fault_q<=S_phase_fault;
             if(S_power_count>=3) S_phase_armed<=1;
             if(S_activate_gap!=0) S_activate_gap<=S_activate_gap-1'b1;
             if(S_read_gap!=0) S_read_gap<=S_read_gap-1'b1;
@@ -129,8 +140,9 @@ module native_sdram_ctrl #(
             end
             if(O_initialized && S_refresh_count!=32'hffffffff) S_refresh_count<=S_refresh_count+1'b1;
             S_read_pipe<={S_read_pipe[READ_DELAY-2:0],S_fire && !I_cmd_wr};
-            S_write_pipe<={S_write_pipe[WRITE_DELAY-2:0],S_fire && I_cmd_wr};
-            S_read_slot[0]<=S_tail; S_write_slot[0]<=S_tail;
+            S_write_pipe<={S_write_pipe[WRITE_DELAY-2:0],S_wr_pending};
+            S_read_slot[0]<=S_tail;
+            S_write_slot[0]<=S_wr_pending ? S_wr_slot : S_tail;
             for(S_i=1;S_i<READ_DELAY;S_i=S_i+1) S_read_slot[S_i]<=S_read_slot[S_i-1];
             for(S_i=1;S_i<WRITE_DELAY;S_i=S_i+1) S_write_slot[S_i]<=S_write_slot[S_i-1];
             if(S_read_pipe[READ_DELAY-1] && !S_phase_fault && !O_clock_fault) begin
@@ -153,9 +165,10 @@ module native_sdram_ctrl #(
                 O_sdram_ba<=S_bank;
                 O_sdram_addr<={3'd0,I_cmd_addr[7:0]}; // A10=0: keep the row open.
                 if(I_cmd_wr) begin
-                    {O_sdram_ras_n,O_sdram_cas_n,O_sdram_we_n}<=3'b100;
-                    S_dq_drive<=1; S_dq_data<=I_cmd_data; O_sdram_dm<=I_cmd_mask;
-                    S_precharge_wait[S_bank]<=T_WR; S_read_gap<=T_WTR;
+                    // Pre-drive data now; the WRITE command follows next cycle.
+                    S_wr_pending<=1; S_wr_bank<=S_bank; S_wr_col<=I_cmd_addr[7:0];
+                    S_wr_mask<=I_cmd_mask; S_wr_slot<=S_tail;
+                    S_dq_drive<=1; S_dq_data<=I_cmd_data;
                 end else begin
                     {O_sdram_ras_n,O_sdram_cas_n,O_sdram_we_n}<=3'b101;
                     // DQM also masks reads: every READ and its data window use zero.
@@ -165,15 +178,21 @@ module native_sdram_ctrl #(
             end
             // DQM has read latency. Keep reads unmasked through every pending return.
             if(S_read_pipe!=0) O_sdram_dm<=0;
-            if(O_clock_fault || S_phase_fault) begin
+            if(O_clock_fault || S_phase_fault_q) begin
                 // Do not retire a logical WRITE when its device clock never ran.
                 // Unknown pin history cannot be repaired by replay or a timeout.
                 // A command accepted on the fault-detection edge remains owed.
-                // Sample the edge comparison HERE, not in combinational ready:
-                // the compared related-clock counters differ for half a cycle.
+                // The registered phase fault gates the output pins; the
+                // completion checks below still use the live comparison.
                 O_clock_fault<=1;
                 {O_sdram_ras_n,O_sdram_cas_n,O_sdram_we_n}<=3'b111;
-                S_dq_drive<=0; O_sdram_dm<=15;
+                S_dq_drive<=0; O_sdram_dm<=15; S_wr_pending<=0;
+            end else if(S_wr_pending) begin
+                {O_sdram_ras_n,O_sdram_cas_n,O_sdram_we_n}<=3'b100;
+                O_sdram_ba<=S_wr_bank; O_sdram_addr<={3'd0,S_wr_col};
+                S_dq_drive<=1; O_sdram_dm<=S_wr_mask;
+                S_precharge_wait[S_wr_bank]<=T_WR; S_read_gap<=T_WTR;
+                S_wr_pending<=0;
             end else case(S_state)
                 POWER:if(S_power_count==INIT_CYCLES-1) begin
                     O_sdram_cke<=1; S_wait<=2; S_state<=WAKE;

@@ -34,7 +34,15 @@
 
 默认ModelSim为 `D:/altera/14.1/modelsim_ase/win32aloem/vsim.exe`，可用 `-VsimPath` 覆盖。中文仓库路径使用临时空闲盘符映射，不搬动源码。执行策略阻止脚本时，可使用进程级 `-ExecutionPolicy Bypass`。
 
-每项失败继续收集其他项，所有项成功退出0，否则退出1。结果保存在 `build/<suite>/<批次>/summary.json`，包含各项退出码、耗时及console/stderr/transcript路径；原始工作库与日志在 `build/<case>/`。先找首个编译/加载错误或自检FAIL，不把波形活动、仅编译成功或部分PASS当作整个用例通过。
+ModelSim 10.1c（Tcl 8.4）需加 `-NoVopt`：脚本会为每个用例生成临时 `.do`，把 `-voptargs=+acc` 换成 `-novopt`，因为该版本的自动 vopt 会挂起。默认仍保持 10.3c 的 vopt 行为。`load_player_bram.do` 与五个 RAM 相关用例已改为 Tcl 8.4 兼容写法，可直接 `source`。
+
+每项失败继续收集其他项，所有项成功退出0，否则退出1。结果保存在 `build/<suite>/<批次>/summary.json`，包含各项退出码、耗时及console/stderr/transcript路径；原始工作库与日志在 `build/<case>/`。每项现在还要求 transcript 由本次运行刷新且含 `^# PASS`，并拒绝 `Startup command`、`syntax error` 等脚本错误；缺少 PASS 或 transcript 均判失败。先找首个编译/加载错误或自检FAIL，不把波形活动、仅编译成功或部分PASS当作整个用例通过。
+
+ModelSim 10.1c 示例：
+
+```powershell
+& ./src/sim/run_p0.ps1 -Suite All -NoVopt -VsimPath D:/Modelsim/win64/vsim.exe
+```
 
 ## 模型边界
 

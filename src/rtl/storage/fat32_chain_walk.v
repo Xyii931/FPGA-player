@@ -33,6 +33,14 @@ module fat32_chain_walk (
     reg S_cache_valid,S_canceled,S_lost;
     wire [32:0] S_entry_lba={1'b0,S_fat_lba}+{8'd0,S_current[31:7]};
     wire [31:0] S_next={4'd0,S_entry[27:0]};
+    // Zero-latency equivalent of the EOC/reserved checks: >= 0x0FFFFFF0 means
+    // bit [31:28] nonzero or bits [27:4] all ones. EOC additionally requires
+    // bits [3:0] >= 8. Sharing this chain halves the wide-compare cost.
+    wire S_next_high_bad=(|S_next[31:28]) || (&S_next[27:4]);
+    wire S_next_eoc=S_next_high_bad && S_next[3:0]>=4'd8;
+    wire S_next_lt2=!(|S_next[31:1]);
+    wire S_next_over=S_next>S_count+32'd1;
+    wire S_next_loop=S_next==S_tortoise || S_next==S_first;
     assign O_start_ready=!I_reset && S_state==IDLE;
     assign O_result_valid=!I_reset && S_state==RESULT;
     assign O_read_valid=!I_reset && I_mounted && S_state==READ_SEND && !S_canceled && !I_cancel;
@@ -94,9 +102,9 @@ module fat32_chain_walk (
                     else begin S_entry_byte<=S_entry_byte+2'd1; S_state<=ENTRY_ADDRESS; end
                 end
                 CHECK_ENTRY: begin
-                    if(S_next>=32'h0ffffff8) begin O_eoc<=1; finish(8'd0); end
-                    else if(S_next<2 || S_next>=32'h0ffffff0 || S_next>S_count+32'd1 ||
-                        S_next==S_current || S_next==S_tortoise || S_next==S_first) finish(8'd9);
+                    if(S_next_eoc) begin O_eoc<=1; finish(8'd0); end
+                    else if(S_next_lt2 || S_next_high_bad || S_next_over ||
+                        S_next==S_current || S_next_loop) finish(8'd9);
                     else begin
                         S_current<=S_next; O_cluster<=S_next; O_hops<=O_hops+32'd1;
                         if(S_lam+32'd1==S_power) begin
@@ -116,4 +124,83 @@ module fat32_chain_walk (
             end
         end
     end
+endmodule
+
+// One chain walker shared by the directory scan and the file reader. The two
+// owners are active in different media-source phases; a busy latch keeps a new
+// owner from changing the walker inputs mid-operation.
+module fat32_chain_share (
+    input wire I_clk,I_reset,
+    input wire [31:0] I_fat_lba,I_cluster_count,
+    input wire [7:0] I_buffer_data,
+    input wire [7:0] I_read_error,
+    input wire [3:0] I_storage_error,
+    // Directory side
+    input wire D_start,D_mounted,D_cancel,D_result_ready,D_read_ready,D_read_result_valid,
+    input wire [31:0] D_first,D_target,D_hop_limit,
+    output wire D_start_ready,D_result_valid,D_eoc,D_read_valid,D_read_abort,D_read_result_ready,
+    output wire [31:0] D_cluster,D_hops,D_lba,
+    output wire [7:0] D_error,
+    output wire [3:0] D_storage_error,
+    output wire [8:0] D_address,
+    // File side
+    input wire F_start,F_mounted,F_cancel,F_result_ready,F_read_ready,F_read_result_valid,
+    input wire [31:0] F_first,F_target,F_hop_limit,
+    output wire F_start_ready,F_result_valid,F_eoc,F_read_valid,F_read_abort,F_read_result_ready,
+    output wire [31:0] F_cluster,F_hops,F_lba,
+    output wire [7:0] F_error,
+    output wire [3:0] F_storage_error,
+    output wire [8:0] F_address
+);
+    reg S_busy,S_owner;
+    wire S_sel=S_busy ? S_owner : (D_start ? 1'b0 : F_start ? 1'b1 : S_owner);
+    wire S_req=!S_busy && (D_start || F_start);
+    wire S_walk_ready,S_walk_result,S_walk_eoc;
+    wire [31:0] S_walk_cluster,S_walk_hops,S_walk_lba;
+    wire [7:0] S_walk_error;
+    wire [3:0] S_walk_storage_error;
+    wire S_walk_read_valid,S_walk_read_abort,S_walk_read_result_ready;
+    wire [8:0] S_walk_address;
+    wire S_result_ready=S_sel ? F_result_ready : D_result_ready;
+    wire S_read_ready=S_sel ? F_read_ready : D_read_ready;
+    wire S_read_result_valid=S_sel ? F_read_result_valid : D_read_result_valid;
+    wire S_start_accept=S_req && S_walk_ready;
+    wire S_result_take=S_walk_result && S_result_ready;
+    always @(posedge I_clk or posedge I_reset) begin
+        if(I_reset) begin S_busy<=0; S_owner<=0; end
+        else if(S_start_accept) begin S_busy<=1; S_owner<=S_sel; end
+        else if(S_result_take) S_busy<=0;
+    end
+    fat32_chain_walk u_walk (
+        .I_clk(I_clk),.I_reset(I_reset),.I_mounted(S_sel ? F_mounted : D_mounted),
+        .I_fat_lba(I_fat_lba),.I_cluster_count(I_cluster_count),
+        .I_start_valid(S_req),.O_start_ready(S_walk_ready),
+        .I_first_cluster(S_sel ? F_first : D_first),
+        .I_target_index(S_sel ? F_target : D_target),
+        .I_hop_limit(S_sel ? F_hop_limit : D_hop_limit),
+        .I_cancel(S_sel ? F_cancel : D_cancel),
+        .O_result_valid(S_walk_result),.I_result_ready(S_result_ready),
+        .O_cluster(S_walk_cluster),.O_hops(S_walk_hops),.O_eoc(S_walk_eoc),
+        .O_error(S_walk_error),.O_storage_error(S_walk_storage_error),
+        .O_read_valid(S_walk_read_valid),.I_read_ready(S_read_ready),
+        .O_read_lba(S_walk_lba),.O_read_abort(S_walk_read_abort),
+        .I_read_result_valid(S_read_result_valid),.O_read_result_ready(S_walk_read_result_ready),
+        .I_read_error(I_read_error),.I_storage_error(I_storage_error),
+        .O_buffer_address(S_walk_address),.I_buffer_data(I_buffer_data));
+    assign D_start_ready=S_walk_ready && !S_busy && !S_sel;
+    assign F_start_ready=S_walk_ready && !S_busy && S_sel;
+    assign D_result_valid=S_walk_result && !S_owner;
+    assign F_result_valid=S_walk_result && S_owner;
+    assign D_eoc=S_walk_eoc; assign F_eoc=S_walk_eoc;
+    assign D_cluster=S_walk_cluster; assign F_cluster=S_walk_cluster;
+    assign D_hops=S_walk_hops; assign F_hops=S_walk_hops;
+    assign D_error=S_walk_error; assign F_error=S_walk_error;
+    assign D_storage_error=S_walk_storage_error; assign F_storage_error=S_walk_storage_error;
+    assign D_read_valid=S_walk_read_valid && !S_owner;
+    assign F_read_valid=S_walk_read_valid && S_owner;
+    assign D_lba=S_walk_lba; assign F_lba=S_walk_lba;
+    assign D_read_abort=S_walk_read_abort; assign F_read_abort=S_walk_read_abort;
+    assign D_read_result_ready=S_walk_read_result_ready;
+    assign F_read_result_ready=S_walk_read_result_ready;
+    assign D_address=S_walk_address; assign F_address=S_walk_address;
 endmodule

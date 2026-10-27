@@ -32,7 +32,8 @@ module bmp_parser (
         ST_GEOMETRY=9, ST_STRIDE=10, ST_AREA=11, ST_END=12, ST_LENGTH=13;
     reg [3:0] S_state;
     reg [7:0] S_header [0:53];
-    reg [31:0] S_file_size, S_pos, S_row_pos;
+    reg [31:0] S_file_size, S_file_size_m1, S_pos, S_row_pos;
+    reg S_at_last;
     reg [15:0] S_x, S_row;
     reg [1:0] S_component;
     reg [7:0] S_blue, S_green, S_red;
@@ -42,8 +43,8 @@ module bmp_parser (
     reg [12:0] S_stride;
     reg [23:0] S_image_bytes;
     reg [32:0] S_pixel_end;
+    reg [31:0] S_row_data_bytes;
     wire [31:0] S_offset_raw;
-    wire [31:0] S_row_data_bytes = O_width * ((O_bpp == 24) ? 32'd3 : 32'd4);
     function [31:0] header_u32;
         input integer offset;
         begin
@@ -62,10 +63,14 @@ module bmp_parser (
     always @(posedge I_clk) begin
         if (S_state == ST_CHECK)
             S_height_abs <= S_height_raw[31] ? (~S_height_raw + 32'd1) : S_height_raw;
-        if (S_state == ST_STRIDE)
+        if (S_state == ST_STRIDE) begin
             S_stride <= (O_bpp == 24) ?
                 (((({2'd0,O_width[10:0]} << 1) + {2'd0,O_width[10:0]} + 13'd3) >> 2) << 2) :
                 ({2'd0,O_width[10:0]} << 2);
+            // Register the unpadded row length so the pixel loop never waits
+            // for the width*3/4 multiplier.
+            S_row_data_bytes <= O_width * ((O_bpp == 24) ? 32'd3 : 32'd4);
+        end
         if (S_state == ST_AREA)
             S_image_bytes <= S_stride * O_height[10:0];
         if (S_state == ST_END)
@@ -81,7 +86,7 @@ module bmp_parser (
     always @(posedge I_clk or posedge I_reset) begin
         if (I_reset) begin
             S_state <= ST_IDLE;
-            S_file_size <= 0; S_pos <= 0; S_row_pos <= 0;
+            S_file_size <= 0; S_file_size_m1 <= 0; S_pos <= 0; S_row_pos <= 0; S_at_last <= 0;
             S_x <= 0; S_row <= 0; S_component <= 0;
             S_blue <= 0; S_green <= 0; S_red <= 0;
             O_done <= 0; O_err <= 0; O_error_code <= 0; O_tag <= 0;
@@ -100,6 +105,8 @@ module bmp_parser (
                 case (S_state)
                     ST_IDLE: if (I_start_valid) begin
                         S_file_size <= I_file_size;
+                        S_file_size_m1 <= I_file_size - 32'd1;
+                        S_at_last <= 1'b0;
                         O_tag <= I_tag;
                         S_pos <= 0; S_row_pos <= 0; S_x <= 0; S_row <= 0; S_component <= 0;
                         O_width <= 0; O_height <= 0; O_bottom_up <= 0; O_bpp <= 0;
@@ -152,12 +159,13 @@ module bmp_parser (
                 endcase
                 if (I_byte_valid && O_byte_ready) begin
                     // EOF is checked before producing any pixel from this byte.
-                    if (I_byte_last != (S_pos == S_file_size-1)) begin
+                    if (I_byte_last != S_at_last) begin
                         O_error_code <= 4'd5;
                         O_pixel_valid <= 1'b0;
                         S_state <= ST_FINISH;
                     end else begin
                         S_pos <= S_pos + 1'b1;
+                        S_at_last <= (S_pos + 32'd1 == S_file_size_m1);
                         case (S_state)
                             ST_HEADER: begin
                                 S_header[S_pos] <= I_byte_data;
@@ -192,7 +200,7 @@ module bmp_parser (
                             end
                             default: begin end
                         endcase
-                        if (S_pos == S_file_size-1 && S_state != ST_HEADER)
+                        if (S_at_last && S_state != ST_HEADER)
                             S_state <= ST_DRAIN;
                     end
                 end

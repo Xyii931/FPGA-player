@@ -16,7 +16,11 @@ vlog -work work [file join $script_dir .. rtl media audio_frame_fifo.v]
 vlog -work work [file join $script_dir .. rtl media lean_audio.v]
 source [file join $script_dir load_player_bram.do]
 vlog -work work [file join $script_dir tb_lean_audio.v]
-vsim -voptargs=+acc work.tb_lean_audio {*}$bram_extra_tops
+if {[llength $bram_extra_tops]} {
+    vsim -voptargs=+acc work.tb_lean_audio [lindex $bram_extra_tops 0]
+} else {
+    vsim -voptargs=+acc work.tb_lean_audio
+}
 onfinish stop
 run -all
 if {[examine -radix binary /tb_lean_audio/S_test_pass] ne "1"} {quit -force -code 1}
