@@ -2,7 +2,7 @@
 // Real BMP parser, lean loader/scanout/native SDRAM; independent command fixture.
 // Pixel reference inverts each destination transform, not the DUT's forward map.
 module tb_lean_video;
-    reg S_host=0,S_video=0,S_reset=1,S_start=0,S_slot=0,S_byte_valid=0,S_last=0,S_file_done=0;
+    reg S_host=0,S_memory_clk=0,S_video=0,S_reset=1,S_start=0,S_slot=0,S_byte_valid=0,S_last=0,S_file_done=0;
     reg [1:0] S_rotation=0;
     reg [7:0] S_byte=0,S_file_error=0;
     wire S_start_ready,S_byte_ready,S_cancel,S_done;
@@ -26,7 +26,8 @@ module tb_lean_video;
     reg S_test_pass=0,S_active=0,S_active_slot=0;
     integer S_i,S_rot,S_count,S_byte_index,S_wait,S_cases=0;
     reg S_bottom=1;
-    always #4 S_host=~S_host;
+    always #6 S_host=~S_host;
+    always @(S_host) S_memory_clk<=#7 S_host;
     always #20 S_video=~S_video;
     lean_image_loader u_loader (
         .I_clk(S_host),.I_reset(S_reset),.I_start_valid(S_start),.O_start_ready(S_start_ready),
@@ -45,7 +46,7 @@ module tb_lean_video;
         .O_frame_start(S_frame),.O_fault(S_scan_fault),.O_underflow_lines(S_underflows)
     );
     lean_frame_memory #(.INIT_CYCLES(32)) u_memory (
-        .I_clk(S_host),.I_clk_sft(~S_host),.I_reset(S_reset),
+        .I_clk(S_host),.I_clk_sft(S_memory_clk),.I_reset(S_reset),
         .I_read_valid(S_read),.O_read_ready(S_read_ready),.I_read_address(S_read_address),.I_read_tag(S_read_tag),
         .O_read_result_valid(S_result),.I_read_result_ready(S_result_ready),.O_read_data(S_result_data),.O_read_tag(S_result_tag),.O_read_error(S_result_error),
         .I_write_valid(S_write),.O_write_ready(S_write_ready),.I_write_address(S_write_address),.I_write_data(S_write_data),

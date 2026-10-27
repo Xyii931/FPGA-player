@@ -65,6 +65,13 @@ try {
     if ($substDrive) { & subst.exe $substDrive /D }
 }
 $consoleLog = Join-Path $resultDir 'console.log'
+$synthesisComplete = (Test-Path -LiteralPath $consoleLog) -and
+    (Select-String -LiteralPath $consoleLog -SimpleMatch "PLAYER_TD_SYNTH_PASS $runName" -Quiet)
+$routeComplete = (Test-Path -LiteralPath $consoleLog) -and
+    (Select-String -LiteralPath $consoleLog -SimpleMatch "PLAYER_TD_ROUTE_PASS $runName" -Quiet)
+$completedStage = if ($routeComplete) { 'Routed' } elseif (
+    Test-Path -LiteralPath (Join-Path $resultDir "${runName}_place.db")
+) { 'Placed' } elseif ($synthesisComplete) { 'Synthesis' } else { 'Incomplete' }
 $criticalWarnings = 0
 $errors = 0
 $resources = @()
@@ -91,12 +98,11 @@ if (Test-Path -LiteralPath $consoleLog) {
     $criticalWarnings = @(Select-String -LiteralPath $consoleLog -Pattern ' CRITICAL-WARNING:').Count
     $errors = @(Select-String -LiteralPath $consoleLog -Pattern ' ERROR:').Count
 }
-$passed = $exitCode -eq 0 -and (Test-Path -LiteralPath $consoleLog) -and
-    (Select-String -LiteralPath $consoleLog -SimpleMatch "PLAYER_TD_SYNTH_PASS $runName" -Quiet) -and
+$passed = $exitCode -eq 0 -and $synthesisComplete -and
     $resourceFits -and
     $criticalWarnings -eq 0 -and $errors -eq 0
 if ($PlaceAndRoute) {
-    $passed = $passed -and (Select-String -LiteralPath $consoleLog -SimpleMatch "PLAYER_TD_ROUTE_PASS $runName" -Quiet)
+    $passed = $passed -and $routeComplete
 }
 $setupWns = $null
 $holdWns = $null
@@ -118,7 +124,8 @@ if ($PlaceAndRoute) { $passed = $passed -and $timingMet -eq $true }
 $result = [pscustomobject]@{
     Project = $Project
     Module = $Module
-    Stage = if ($PlaceAndRoute) { 'Routed' } else { 'Synthesis' }
+    Stage = $completedStage
+    RequestedStage = if ($PlaceAndRoute) { 'Routed' } else { 'Synthesis' }
     Passed = [bool]$passed
     ExitCode = $exitCode
     CriticalWarnings = $criticalWarnings

@@ -38,13 +38,17 @@ module fat32_dir_stream (
     input wire [8:0] I_walk_address
 );
     localparam [3:0] IDLE=0,PREPARE=1,READ_SEND=2,READ_WAIT=3,ADDRESS=4,LATCH=5,
-        BYTE_OUT=6,WALK_START=7,WALK_WAIT=8,RESULT=9,SETUP_END=10,SETUP_LBA=11;
+        BYTE_OUT=6,WALK_START=7,WALK_WAIT=8,RESULT=9,SETUP_END=10,SETUP_LBA=11,
+        WALK_CHECK=12,WALK_UPDATE=13,SETUP_OFFSET=14;
     reg [3:0] S_state;
     reg [31:0] S_current,S_first,S_budget,S_tortoise,S_power,S_lam,S_hops;
     reg [36:0] S_end_lba,S_cluster_lba;
     reg [6:0] S_sector;
     reg [8:0] S_byte;
     reg S_stopped,S_canceled,S_lost;
+    reg [31:0] S_next_cluster;
+    reg [7:0] S_next_error;
+    reg S_next_eoc;
     wire S_stop=S_stopped || I_stop;
     wire S_cancel=S_canceled || I_cancel;
     wire S_invalid=S_lost || !I_mounted;
@@ -96,6 +100,7 @@ module fat32_dir_stream (
             S_power<=1; S_lam<=0; S_hops<=0; S_sector<=0; S_byte<=0;
             S_end_lba<=0; S_cluster_lba<=0;
             S_stopped<=0; S_canceled<=0; S_lost<=0;
+            S_next_cluster<=0; S_next_error<=0; S_next_eoc<=0;
             O_byte_data<=0; O_error<=0; O_storage_error<=0; O_sectors<=0;
         end else begin
             if(S_state!=IDLE && S_state!=RESULT) begin
@@ -118,10 +123,15 @@ module fat32_dir_stream (
                 end
                 SETUP_END: begin
                     S_end_lba<={5'd0,I_data_lba}+{1'b0,S_end_offset};
+                    S_state<=SETUP_OFFSET;
+                end
+                SETUP_OFFSET: begin
+                    // Compute cluster subtraction/shift before the base add.
+                    S_cluster_lba<={1'b0,S_cluster_offset};
                     S_state<=SETUP_LBA;
                 end
                 SETUP_LBA: begin
-                    S_cluster_lba<={5'd0,I_data_lba}+{1'b0,S_cluster_offset};
+                    S_cluster_lba<={5'd0,I_data_lba}+S_cluster_lba;
                     S_state<=PREPARE;
                 end
                 PREPARE: if(O_sectors>=S_budget) finish(8'd10);
@@ -148,18 +158,25 @@ module fat32_dir_stream (
                     else if(S_walk_ready) S_state<=WALK_WAIT;
                 WALK_WAIT: if(S_walk_result) begin
                     O_storage_error<=S_walk_storage_error;
+                    S_next_cluster<=S_walk_cluster; S_next_error<=S_walk_error; S_next_eoc<=S_walk_eoc;
+                    S_state<=WALK_CHECK;
+                end
+                WALK_CHECK: begin
                     if(S_invalid) finish(8'd1);
                     else if(S_cancel) finish(8'd8);
                     else if(S_stop) finish(8'd0);
-                    else if(S_walk_error!=0) finish(S_walk_error);
-                    else if(S_walk_eoc) finish(8'd0);
-                    else if(S_walk_cluster==S_first || S_walk_cluster==S_tortoise) finish(8'd9);
-                    else begin
-                        S_current<=S_walk_cluster; S_hops<=S_hops+32'd1;
-                        if(S_lam+32'd1==S_power) begin S_tortoise<=S_walk_cluster; S_power<=S_power<<1; S_lam<=0; end
-                        else S_lam<=S_lam+32'd1;
-                        S_state<=SETUP_LBA;
-                    end
+                    else if(S_next_error!=0) finish(S_next_error);
+                    else if(S_next_eoc) finish(8'd0);
+                    else if(S_next_cluster==S_first || S_next_cluster==S_tortoise) finish(8'd9);
+                    else S_state<=WALK_UPDATE;
+                end
+                WALK_UPDATE: begin
+                    // A loop-counter carry/compare must not also gate the
+                    // directory error, shared walker and SD command enables.
+                    S_current<=S_next_cluster; S_hops<=S_hops+32'd1;
+                    if(S_lam+32'd1==S_power) begin S_tortoise<=S_next_cluster; S_power<=S_power<<1; S_lam<=0; end
+                    else S_lam<=S_lam+32'd1;
+                    S_state<=SETUP_OFFSET;
                 end
                 RESULT:if(I_end_ready) S_state<=IDLE;
                 default:finish(8'd3);

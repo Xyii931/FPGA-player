@@ -33,8 +33,8 @@ module tb_pll_tree;
 
     // Check all five output routes, not hardware PLL accuracy.
     pll_tree_period_check #(10) u_p100(S_clk100, S_check_periods);
-    pll_tree_period_check #(10) u_p125(S_clk125, S_check_periods);
-    pll_tree_period_check #(10) u_p125s(S_clk125s, S_check_periods);
+    pll_tree_period_check #(12) u_p125(S_clk125, S_check_periods);
+    pll_tree_period_check #(12) u_p125s(S_clk125s, S_check_periods);
     pll_tree_period_check #(40) u_p25(S_clk25, S_check_periods);
     pll_tree_period_check #(8) u_p5x(S_clk5x, S_check_periods);
 

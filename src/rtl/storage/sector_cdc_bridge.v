@@ -70,10 +70,13 @@ module sector_cdc_bridge #(
     reg [1:0] S_stop_sync,S_allow_sync,S_ack_sync;
     reg S_host_ack;
     reg [2:0] S_urgent_meta,S_urgent_sync;
-    wire S_command_write_ready,S_command_valid,S_command_cancel,S_command_read_ready;
+    wire S_command_write_ready,S_command_cancel,S_command_read_ready;
+    reg S_command_valid;
     wire S_command_full,S_command_empty;
     wire [COMMAND_ADDR_BITS:0] S_command_write_level,S_command_read_level;
-    wire [60:0] S_command_data;
+    reg [60:0] S_command_data;
+    wire S_command_fifo_valid;
+    wire [60:0] S_command_fifo_data;
     reg S_command_write_valid;
     reg [60:0] S_command_write_data;
     wire S_host_buffer_ready=!S_command_write_valid || S_command_write_ready;
@@ -130,8 +133,17 @@ module sector_cdc_bridge #(
         .O_write_ready(S_command_write_ready),
         .I_write_data(S_command_write_data),
         .O_write_full(S_command_full),.O_write_level(S_command_write_level),
-        .O_read_valid(S_command_valid),.I_read_ready(S_command_read_ready),.O_read_data(S_command_data),
+        .O_read_valid(S_command_fifo_valid),.I_read_ready(!S_command_valid),.O_read_data(S_command_fifo_data),
         .O_read_empty(S_command_empty),.O_read_level(S_command_read_level));
+    // Decouple the synchronous FIFO read-enable from the SD request validation
+    // and return arbitration cones. One held command preserves FIFO ordering.
+    always @(posedge I_sd_clk or posedge S_sd_reset) begin
+        if(S_sd_reset) begin S_command_valid<=0; S_command_data<=0; end
+        else if(!S_command_valid) begin
+            S_command_valid<=S_command_fifo_valid;
+            if(S_command_fifo_valid) S_command_data<=S_command_fifo_data;
+        end else if(S_command_read_ready) S_command_valid<=0;
+    end
     always @* begin
         S_offer_valid=!S_sd_reset && (S_choose_done || S_choose_byte || S_choose_cancel || S_choose_reject);
         S_offer_data=0;
@@ -187,7 +199,7 @@ module sector_cdc_bridge #(
             S_ack_sync<={S_ack_sync[0],S_host_ack};
             S_urgent_meta<=I_urgent_context; S_urgent_sync<=S_urgent_meta;
             case(S_media_state)
-                BLOCKED: if(S_ack_sync[1] && S_command_read_level==0 && !S_command_valid && I_sd_card_ready) begin
+                BLOCKED: if(S_ack_sync[1] && S_command_read_level==0 && !S_command_valid && !S_command_fifo_valid && I_sd_card_ready) begin
                     S_capacity_snapshot<=I_sd_capacity_sectors;
                     S_stop<=0; S_media_state<=OPENING;
                 end

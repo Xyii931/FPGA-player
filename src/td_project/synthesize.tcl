@@ -43,10 +43,10 @@ if {[catch {
         set scope_sdc [file join $build_dir ${run_name}_scope.sdc]
         set scope_file [open $scope_sdc w]
         if {$module_name eq "audio_frame_fifo"} {
-            puts $scope_file {create_clock -name write_clk -period 8.000 [get_ports I_write_clk]}
+            puts $scope_file {create_clock -name write_clk -period 12.000 [get_ports I_write_clk]}
             puts $scope_file {create_clock -name read_clk -period 40.000 [get_ports I_read_clk]}
         } else {
-            puts $scope_file {create_clock -name host_clk -period 8.000 [get_ports I_clk]}
+            puts $scope_file {create_clock -name host_clk -period 12.000 [get_ports I_clk]}
         }
         close $scope_file
         read_sdc $scope_sdc
@@ -61,6 +61,12 @@ if {[catch {
     puts "PLAYER_TD_STAGE optimize_gate"
     set step optimize_gate
     commit_param -step gate
+    if {$project_name eq "lean_player" && $module_name eq ""} {
+        # EG4 skips hold repair above 90% occupied slices. Prefer area mapping
+        # and stronger packing to leave room for physical delay repair.
+        set_param gate map_mode area_prior
+        set_param gate pack_effort high
+    }
     if {$module_name eq ""} {
         optimize_gate -packarea ${run_name}_gate.area
     } else {
@@ -72,6 +78,13 @@ if {[catch {
         # TD 6.2.168116 crashes in create_syn_ip for this internal-bus top.
     }
     legalize_phy_inst
+    # TD's command guide requires reloading SDC after physical legalization:
+    # mapping introduces the hard SDRAM pins and IO registers used by STA.
+    if {$module_name eq ""} {
+        read_sdc [file join $repo_root src constraints ${constraint_name}.sdc]
+    } else {
+        read_sdc $scope_sdc
+    }
     export_db ${run_name}_gate.db
     puts "PLAYER_TD_STAGE timing"
     set step timing
@@ -85,14 +98,25 @@ if {[catch {
         puts "PLAYER_TD_STAGE place"
         set step place
         load_run_param -run phy_1
+        if {$project_name eq "lean_player"} {
+            # Validated physical configuration for the current mapped design.
+            # The default strategy hit a local incremental-route conflict.
+            set_param flow enable_seed on
+            # open_project -single_run uses the active in-memory properties.
+            # -run only updates the saved project and did not affect place.
+            set_param place seed 1
+            set_param place pr_strategy 2
+            set_param place effort high
+        }
         if {[info exists ::env(FPGA_PLAYER_SEED)]} {
             set_param flow enable_seed on
-            set_param -run phy_1 place seed $::env(FPGA_PLAYER_SEED)
+            set_param place seed $::env(FPGA_PLAYER_SEED)
         }
         if {[info exists ::env(FPGA_PLAYER_PR_STRATEGY)]} {
-            set_param -run phy_1 place pr_strategy $::env(FPGA_PLAYER_PR_STRATEGY)
+            set_param place pr_strategy $::env(FPGA_PLAYER_PR_STRATEGY)
         }
         commit_param -step place
+        report_param -stage place -file ${run_name}_place.params
         place
         update_timing -mode manhattan
         report_timing_summary -file ${run_name}_place.timing
@@ -100,17 +124,28 @@ if {[catch {
         puts "PLAYER_TD_STAGE route"
         set step route
         commit_param -step route
+        # TD 6.2.168116 can create conflicting routes when its automatic hold
+        # insertion runs inside route. The documented standalone fix_hold flow
+        # repairs the same design after a clean route checkpoint instead.
+        # Timing acceptance still uses the final report AFTER hold repair.
+        set_param route fix_hold off
         if {[info exists ::env(FPGA_PLAYER_ROUTE_MULTITRY)] &&
             $::env(FPGA_PLAYER_ROUTE_MULTITRY) eq "1"} {
             set_param route multi_try_route_bad_qor_check off
         }
         route
+        export_db ${run_name}_route.db
+        puts "PLAYER_TD_STAGE hold_fix"
+        set step hold_fix
+        fix_hold
         update_timing -mode final
         report_area -io_info -file ${run_name}_phy.area
         report_timing_status -file ${run_name}_phy.ts
         report_timing_summary -file ${run_name}_pr.timing
         report_timing_exception -file ${run_name}_exception.timing
-        report_clock_utilization -file ${run_name}_clock_utilization.rpt
+        # EG4 does not support report_clock_utilization. Save the supported
+        # clock summary; actual edge/period information is in *_pr.timing.
+        report_clock_summary -file ${run_name}_phy_clocks.rpt
         export_db ${run_name}_pr.db
         puts "PLAYER_TD_ROUTE_PASS $run_name"
     }

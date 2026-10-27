@@ -26,7 +26,7 @@ module fat32_mount (
 );
     localparam [3:0] IDLE=0,FETCH=1,FETCH_WAIT=2,SCAN_ADDRESS=3,SCAN_BYTE=4,
         IDENTIFY=5,SELECT_PARTITION=6,VALIDATE=7,RESULT=8,
-        GEO_PREP=9,GEO_BASES=10,GEO_SUB=11,GEO_CLUSTERS=12,VALIDATE_FINAL=13;
+        GEO_PREP=9,GEO_BASES=10,GEO_SUB=11,GEO_CLUSTERS=12,VALIDATE_FINAL=13,GEO_CHECK=14;
     reg [3:0] S_state;
     reg [8:0] S_scan;
     reg S_partition_sector;
@@ -53,6 +53,7 @@ module fat32_mount (
     reg [33:0] S_overhead,S_data_base;
     reg [32:0] S_fat_base,S_volume_end,S_partition_end;
     reg [38:0] S_fat_entries;
+    reg S_geometry_bad,S_address_bad;
     assign O_start_ready=!I_reset && S_state==IDLE;
     assign O_result_valid=!I_reset && S_state==RESULT;
     assign O_read_valid=!I_reset && S_state==FETCH && I_card_ready;
@@ -87,6 +88,16 @@ module fat32_mount (
         end
         if(S_state==GEO_SUB) S_data_sectors<=S_total>{1'b0,S_overhead} ? S_total-S_overhead : 32'd0;
         if(S_state==GEO_CLUSTERS) S_clusters<=S_data_sectors>>S_shift;
+        // Separate range arithmetic from publishing the mounted geometry.
+        if(S_state==GEO_CHECK) begin
+            S_geometry_bad<=S_total<={1'b0,S_overhead} ||
+                S_clusters<16'd65525 || S_clusters>32'h0fffffee ||
+                S_fat_entries<{7'd0,S_clusters}+39'd2 ||
+                S_root_cluster<2 || {7'd0,S_root_cluster}>{7'd0,S_clusters}+39'd1;
+            S_address_bad<={1'b0,S_total}>S_partition_length || S_volume_end>S_capacity ||
+                S_partition_end>S_capacity || S_volume_end>33'h100000000 ||
+                S_fat_base>33'h0ffffffff || S_data_base>34'h0ffffffff;
+        end
     end
     task clear_fields;
         begin
@@ -192,15 +203,11 @@ module fat32_mount (
                 GEO_PREP:S_state<=GEO_BASES;
                 GEO_BASES:S_state<=GEO_SUB;
                 GEO_SUB:S_state<=GEO_CLUSTERS;
-                GEO_CLUSTERS:S_state<=VALIDATE_FINAL;
+                GEO_CLUSTERS:S_state<=GEO_CHECK;
+                GEO_CHECK:S_state<=VALIDATE_FINAL;
                 VALIDATE_FINAL: begin
-                    if(S_total<={1'b0,S_overhead} ||
-                        S_clusters<16'd65525 || S_clusters>32'h0fffffee ||
-                        S_fat_entries<{7'd0,S_clusters}+39'd2 ||
-                        S_root_cluster<2 || {7'd0,S_root_cluster}>{7'd0,S_clusters}+39'd1) finish(8'd6);
-                    else if({1'b0,S_total}>S_partition_length || S_volume_end>S_capacity ||
-                        S_partition_end>S_capacity || S_volume_end>33'h100000000 ||
-                        S_fat_base>33'h0ffffffff || S_data_base>34'h0ffffffff) finish(8'd5);
+                    if(S_geometry_bad) finish(8'd6);
+                    else if(S_address_bad) finish(8'd5);
                     else begin
                         O_partition_lba<=S_partition_lba; O_volume_sectors<=S_total[31:0];
                         O_fat_lba<=S_fat_base[31:0]; O_data_lba<=S_data_base[31:0];

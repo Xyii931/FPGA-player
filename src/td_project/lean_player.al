@@ -430,7 +430,9 @@
         <Run Name="phy_1" Type="PhysicalDesign" ConstraintSet="constraint_1" Description="" SynRun="syn_1" Active="true">
             <Strategy Name="Default_PhysicalDesign_Strategy">
                 <PlaceProperty>
-                    <seed>7</seed>
+                    <effort>high</effort>
+                    <pr_strategy>2</pr_strategy>
+                    <seed>1</seed>
                 </PlaceProperty>
             </Strategy>
             <UserParams>

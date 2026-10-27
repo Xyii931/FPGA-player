@@ -22,6 +22,7 @@ module lean_player_ctrl #(
     output reg [31:0] O_dropped
 );
     reg [31:0] S_second;
+    reg S_timer_restart;
     reg [5:0] S_elapsed;
     reg [23:0] S_line;
     reg [1:0] S_length,S_reply;
@@ -37,9 +38,15 @@ module lean_player_ctrl #(
     wire S_skip_lf=I_rx_data==10 && S_last_cr;
     wire S_line_end=I_rx_valid && S_newline && !S_skip_lf && (S_length!=0 || S_bad);
     wire [7:0] S_tens=S_line[15:8],S_ones=S_line[7:0];
-    wire [6:0] S_seconds=(S_tens-8'd48)*7'd10+(S_ones-8'd48);
-    wire S_valid_time=S_length==3 && S_line[23:16]=="T" && S_tens>="0" && S_tens<="6" &&
-        S_ones>="0" && S_ones<="9" && S_seconds>=1 && S_seconds<=60;
+    // ASCII digits carry their decimal value in the low nibble. Bound the
+    // digits directly, then form 10*tens as 8*tens + 2*tens. This avoids a DSP
+    // multiplier followed by a range check in the command response path.
+    wire [3:0] S_tens_digit=S_tens[3:0],S_ones_digit=S_ones[3:0];
+    wire [6:0] S_seconds={S_tens_digit,3'b000}+{2'b00,S_tens_digit,1'b0}+{3'b000,S_ones_digit};
+    wire S_valid_time=S_length==3 && S_line[23:16]=="T" &&
+        S_tens[7:4]==4'h3 && S_ones[7:4]==4'h3 && S_ones_digit<=9 &&
+        ((S_tens_digit<6 && (S_tens_digit!=0 || S_ones_digit!=0)) ||
+         (S_tens_digit==6 && S_ones_digit==0));
     function [7:0] hex_digit;
         input [3:0] value;
         begin hex_digit=value<10 ? 8'd48+value : 8'd55+value; end
@@ -71,14 +78,14 @@ module lean_player_ctrl #(
     end
     always @(posedge I_clk or posedge I_reset) begin
         if(I_reset) begin
-            S_second<=0; S_elapsed<=0; S_line<=0; S_length<=0; S_reply<=0;
+            S_second<=0; S_timer_restart<=0; S_elapsed<=0; S_line<=0; S_length<=0; S_reply<=0;
             S_bad<=0; S_last_cr<=0; S_tx_index<=0; O_next<=0; O_prev<=0; O_reload<=0;
             O_auto<=1; O_mute<=0; O_rotation<=0; O_volume<=4; O_interval<=5; O_dropped<=0;
             S_current<=0; S_count<=0; S_auto<=0; S_mute<=0; S_busy<=0;
             S_rotation<=0; S_volume<=0; S_interval<=0; S_error<=0;
         end else begin
-            O_next<=0; O_prev<=0; O_reload<=0;
-            if(!I_active || I_busy || I_changed || !O_auto) begin S_second<=0; S_elapsed<=0; end
+            O_next<=0; O_prev<=0; O_reload<=0; S_timer_restart<=0;
+            if(!I_active || I_busy || I_changed || !O_auto || S_timer_restart) begin S_second<=0; S_elapsed<=0; end
             else if(S_second==CLOCK_HZ-1) begin
                 S_second<=0;
                 if(S_elapsed==O_interval-1) begin S_elapsed<=0; O_next<=1; end
@@ -112,14 +119,14 @@ module lean_player_ctrl #(
                                 S_volume<=O_volume; S_mute<=O_mute; S_busy<=I_busy;
                             end
                             else if(S_length==2 && S_line[15:8]=="A" && (S_line[7:0]=="0" || S_line[7:0]=="1")) begin
-                                O_auto<=S_line[0]; S_second<=0; S_elapsed<=0;
+                                O_auto<=S_line[0]; S_timer_restart<=1;
                             end
                             else if(S_length==2 && S_line[15:8]=="M" && (S_line[7:0]=="0" || S_line[7:0]=="1")) O_mute<=S_line[0];
                             else if(S_length==2 && S_line[15:8]=="R" && S_line[7:0]>="0" && S_line[7:0]<="3") begin
                                 O_rotation<=S_line[1:0]; O_reload<=1;
                             end
                             else if(S_length==2 && S_line[15:8]=="V" && S_line[7:0]>="0" && S_line[7:0]<="4") O_volume<=S_line[2:0];
-                            else if(S_valid_time) begin O_interval<=S_seconds[5:0]; S_second<=0; S_elapsed<=0; end
+                            else if(S_valid_time) begin O_interval<=S_seconds[5:0]; S_timer_restart<=1; end
                             else S_reply<=2;
                         end
                     end else if(!S_newline) begin

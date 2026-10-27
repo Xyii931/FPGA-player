@@ -1,7 +1,8 @@
 // Read-only card initialization plus four resumable requests. One CMD17 per turn.
 // CRC-checked sector RAM prevents delivery of a corrupt or canceled partial block.
 module sd_sector_reader #(
-    parameter [15:0] INIT_DIVIDER=16'd250,WORK_DIVIDER=16'd4,
+    // 16.667 MHz at the 100 MHz SD clock; retain margin for TF return delay.
+    parameter [15:0] INIT_DIVIDER=16'd250,WORK_DIVIDER=16'd6,
     parameter [31:0] POWERUP_CYCLES=32'd100000,
     parameter [31:0] INIT_TIMEOUT_CYCLES=32'd100000000,
     parameter [31:0] INIT_POLL_CYCLES=32'd100000,
@@ -102,7 +103,14 @@ module sd_sector_reader #(
     reg [7:0] S_command_crc;
     reg [2:0] S_response_bytes;
     wire S_read_command=S_state==READ_SEND || S_state==READ_WAIT;
-    wire S_phy_abort=S_read_command && (S_canceled[S_active] || S_cancel_active);
+    // End cancel/tag arbitration before PHY retirement and chip-select logic.
+    // Canceled sector output is suppressed immediately; the PHY can finish
+    // its current byte before stopping.
+    reg S_phy_abort;
+    always @(posedge I_clk or posedge I_reset) begin
+        if(I_reset) S_phy_abort<=0;
+        else S_phy_abort<=S_read_command && (S_canceled[S_active] || S_cancel_active);
+    end
 
     assign O_card_present=O_card_ready;
     assign O_request_ready=!I_reset && O_card_ready && S_free_found && !S_duplicate && !I_cancel_valid &&
@@ -153,7 +161,9 @@ module sd_sector_reader #(
     end
     sd_spi_phy #(.RESPONSE_TIMEOUT_CYCLES(RESPONSE_TIMEOUT_CYCLES),.TOKEN_TIMEOUT_CYCLES(TOKEN_TIMEOUT_CYCLES),
         .BUSY_TIMEOUT_CYCLES(BUSY_TIMEOUT_CYCLES),.STALL_TIMEOUT_CYCLES(STALL_TIMEOUT_CYCLES)) u_phy (
-        .I_clk(I_clk),.I_reset(I_reset),.I_cmd_valid(S_state==COMMAND_SEND || S_state==READ_SEND),
+        .I_clk(I_clk),.I_reset(I_reset),
+        .I_cmd_valid(S_state==COMMAND_SEND ||
+            (S_state==READ_SEND && !S_canceled[S_active] && !S_cancel_active)),
         .O_cmd_ready(S_phy_cmd_ready),.I_cmd_index(S_command_index),.I_cmd_argument(S_command_argument),
         .I_cmd_crc(S_command_crc),.I_response_bytes(S_response_bytes),.I_block_count(8'd1),
         .I_divider((S_read_command || S_step==PROBE_CMD13) ? WORK_DIVIDER : INIT_DIVIDER),

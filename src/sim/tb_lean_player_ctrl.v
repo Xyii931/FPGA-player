@@ -11,7 +11,8 @@ module tb_lean_player_ctrl;
     wire [5:0] S_interval;
     wire [31:0] S_dropped;
     reg [319:0] S_response=0;
-    integer S_length=0,S_next_count=0,S_prev_count=0,S_reload_count=0,S_before,S_i;
+    integer S_length=0,S_next_count=0,S_prev_count=0,S_reload_count=0,S_before,S_i,S_test_interval;
+    reg [7:0] S_time_tens,S_time_ones;
     reg S_test_pass=0;
     always #4 S_clk=~S_clk;
     lean_player_ctrl #(.CLOCK_HZ(16)) u_dut (
@@ -57,6 +58,16 @@ module tb_lean_player_ctrl;
         line("P",1,1); if(S_prev_count!=1) fail("PREV missing");
         line("T00",3,0); line("T61",3,0); line("R4",2,0); line("V5",2,0); line("NXXX",4,0);
         if(S_interval!=1 || S_rotation!=3 || S_volume!=2 || S_next_count!=S_before+1) fail("invalid command executed");
+        // Cover every accepted decimal interval and reject non-digit ASCII
+        // around the digit boundaries; range decoding must not alias them.
+        for(S_test_interval=1;S_test_interval<=60;S_test_interval=S_test_interval+1) begin
+            S_time_tens=48+S_test_interval/10; S_time_ones=48+S_test_interval%10;
+            line({8'h54,S_time_tens,S_time_ones},3,1);
+            if(S_interval!=S_test_interval) fail("decimal interval decoding mismatch");
+        end
+        line("T0/",3,0); line("T0:",3,0); line("T/1",3,0); line("T70",3,0);
+        if(S_interval!=60) fail("malformed time command executed");
+        line("T01",3,1);
         S_response=0; S_length=0; S_ready=0; byte_send("?"); byte_send(10);
         wait(S_tx); #1; S_held=S_tx_byte; S_current=9; S_count=16;
         repeat(5) begin @(posedge S_clk); #1; if(!S_tx || S_tx_byte!==S_held) fail("TX changed while stalled"); end

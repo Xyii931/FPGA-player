@@ -41,6 +41,8 @@ module sector_reader_case #(
     integer S_cycle=0,S_k,S_tag_index,S_expected_lba,S_expected_byte,S_seen_reads=0,S_order[0:15];
     integer S_completion_total=0,S_read_before;
     wire S_internal_canceled,S_internal_block_good,S_internal_phy_busy;
+    wire S_internal_read_send;
+    wire [5:0] S_internal_phy_index;
     wire [9:0] S_internal_write_count;
     reg [15:0] S_drop_data=0;
     wire S_canceling_data=S_internal_canceled ||
@@ -49,7 +51,7 @@ module sector_reader_case #(
     reg [27:0] S_held_byte;
     reg [21:0] S_held_done;
     generate if(USE_BRIDGE) begin : g_bridge
-    sd_storage #(.INIT_DIVIDER(4),.POWERUP_CYCLES(8),.INIT_TIMEOUT_CYCLES(100000),
+    sd_storage #(.INIT_DIVIDER(6),.POWERUP_CYCLES(8),.INIT_TIMEOUT_CYCLES(100000),
         .INIT_POLL_CYCLES(100),.RETRY_CYCLES(3000),.PROBE_CYCLES(50000),
         .DELIVERY_TIMEOUT_CYCLES(10000),.RESPONSE_TIMEOUT_CYCLES(2000),
         .TOKEN_TIMEOUT_CYCLES(1000),.BUSY_TIMEOUT_CYCLES(1000),.STALL_TIMEOUT_CYCLES(1000)) u_dut (
@@ -66,12 +68,14 @@ module sector_reader_case #(
         assign S_internal_write_count=u_dut.u_reader.S_write_count;
         assign S_internal_block_good=u_dut.u_reader.S_block_good;
         assign S_internal_phy_busy=u_dut.u_reader.S_phy_busy;
+        assign S_internal_phy_index=u_dut.u_reader.u_phy.S_index;
         assign S_internal_canceled=u_dut.u_reader.S_canceled[u_dut.u_reader.S_active];
+        assign S_internal_read_send=u_dut.u_reader.S_state==u_dut.u_reader.READ_SEND;
         always @(posedge S_sd_clk) if(!S_reset && u_dut.S_byte_valid && u_dut.S_byte_ready)
             if(!S_internal_block_good || S_internal_write_count!=512 || S_internal_phy_busy)
                 fail("bridge input before CRC/physical completion");
     end else begin : g_direct
-    sd_sector_reader #(.INIT_DIVIDER(4),.POWERUP_CYCLES(8),.INIT_TIMEOUT_CYCLES(100000),
+    sd_sector_reader #(.INIT_DIVIDER(6),.POWERUP_CYCLES(8),.INIT_TIMEOUT_CYCLES(100000),
         .INIT_POLL_CYCLES(100),.RETRY_CYCLES(3000),.PROBE_CYCLES(50000),
         .DELIVERY_TIMEOUT_CYCLES(10000),.RESPONSE_TIMEOUT_CYCLES(2000),
         .TOKEN_TIMEOUT_CYCLES(1000),.BUSY_TIMEOUT_CYCLES(1000),.STALL_TIMEOUT_CYCLES(1000)) u_dut (
@@ -88,10 +92,21 @@ module sector_reader_case #(
         assign S_internal_write_count=u_dut.S_write_count;
         assign S_internal_block_good=u_dut.S_block_good;
         assign S_internal_phy_busy=u_dut.S_phy_busy;
+        assign S_internal_phy_index=u_dut.u_phy.S_index;
         assign S_internal_canceled=u_dut.S_canceled[u_dut.S_active];
+        assign S_internal_read_send=u_dut.S_state==u_dut.READ_SEND;
+        always @(posedge S_clk) if(!S_reset && S_internal_read_send && u_dut.S_cancel_active)
+            if(u_dut.u_phy.I_cmd_valid) fail("canceled READ_SEND asserted PHY command valid");
     end endgenerate
-    sd_spi_card_model u_card (
-        .I_ncs(S_ncs),.I_sclk(S_sclk),.I_mosi(S_mosi),.O_miso(S_miso),
+    // Interface envelope, independent of the internal controller/FIFO checks:
+    // 7 ns outward, 14 ns card response, 5 ns inward (FPGA and PCB budget).
+    wire S_card_clk,S_card_ncs,S_card_mosi,S_card_miso;
+    assign #7 S_card_clk=S_sclk;
+    assign #7 S_card_ncs=S_ncs;
+    assign #7 S_card_mosi=S_mosi;
+    assign #5 S_miso=S_card_miso;
+    sd_spi_card_model #(.OUTPUT_DELAY_NS(14)) u_card (
+        .I_ncs(S_card_ncs),.I_sclk(S_card_clk),.I_mosi(S_card_mosi),.O_miso(S_card_miso),
         .I_present(S_present),.I_legacy(LEGACY!=0),.I_high_capacity(HIGH_CAPACITY!=0),
         .I_allow_init(S_allow_init),.I_corrupt_crc(S_corrupt),.O_read_count(S_read_count),.O_last_lba(S_last_lba),
         .O_probe_count(S_probe_count),.O_cmd16_count(S_cmd16_count),.O_acmd41_count(S_acmd41_count),.O_protocol_error(S_model_error));
@@ -248,7 +263,22 @@ module sector_reader_case #(
         S_read_before=S_read_count;
         request(14,0,S_capacity-1,2,0,7); wait(S_done_seen[14]);
         if(S_read_count!=S_read_before || S_bytes_seen[14]!=0) fail("request crossed physical card capacity");
-        if(S_completion_total!=15) fail("missing request terminal");
+        // Cancel at the PHY command acceptance boundary. Registering abort
+        // must not start a read that the owner has already retired.
+        if(!USE_BRIDGE) begin
+            S_read_before=S_read_count;
+            request(15,0,240,1,0,6);
+            wait(S_internal_read_send);
+            cancel_request(15,0);
+            wait(S_done_seen[15]); accept_cancel(15,0);
+            // A periodic CMD13 probe may start after cancellation retires.
+            // Check for the canceled CMD17, not unrelated background traffic.
+            if(S_read_count!=S_read_before || S_bytes_seen[15]!=0 ||
+                (S_internal_phy_busy && S_internal_phy_index==17)) begin
+                fail("cancel at read acceptance started physical work");
+            end
+        end
+        if(S_completion_total!=(USE_BRIDGE ? 15 : 16)) fail("missing request terminal");
         O_done=1;
     end
 endmodule

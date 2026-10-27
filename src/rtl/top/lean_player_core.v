@@ -1,6 +1,8 @@
 // Reduced player integration. Sector and frame-memory endpoints are real protocols;
 // the board wrapper supplies SD SPI, native SDRAM and the vendor HDMI transmitter.
-module lean_player_core (
+module lean_player_core #(
+    parameter integer HOST_CLOCK_HZ=83333333
+) (
     input wire I_host_clk,I_video_clk,I_async_reset,
     input wire [3:0] I_key_release,
     input wire I_rx_valid,I_rx_error,
@@ -141,7 +143,7 @@ module lean_player_core (
         .O_frame_start(S_frame_start),.O_fault(S_scanout_fault),
         .O_underflow_lines()
     );
-    lean_player_ctrl u_control (
+    lean_player_ctrl #(.CLOCK_HZ(HOST_CLOCK_HZ)) u_control (
         .I_clk(I_host_clk),.I_reset(S_hrst),.I_key_release(I_key_release),
         .I_rx_valid(I_rx_valid),.I_rx_error(I_rx_error),.I_rx_data(I_rx_data),
         .O_tx_valid(O_tx_valid),.I_tx_ready(I_tx_ready),.O_tx_data(O_tx_data),

@@ -7,7 +7,7 @@ module tb_lean_player_core;
     reg [3:0] S_keys=0,S_bad_images=0;
     reg S_rx=0;
     reg [7:0] S_rx_data=0;
-    always #4 S_host=~S_host;
+    always #6 S_host=~S_host;
     always #20 S_video=~S_video;
     wire S_tx;
     wire [7:0] S_tx_data;

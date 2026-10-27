@@ -31,7 +31,7 @@ module wav_parser (
     reg [7:0] S_chunk [0:7];
     reg [7:0] S_fmt [0:15];
     reg [3:0] S_header_index;
-    reg [31:0] S_pos, S_size, S_riff_end, S_left, S_payload_index, S_frame;
+    reg [31:0] S_pos, S_size, S_last_pos, S_riff_end, S_left, S_payload_index, S_frame;
     reg [32:0] S_chunk_limit_q;
     reg S_fmt_seen, S_data_seen, S_odd;
     reg [1:0] S_component;
@@ -49,7 +49,7 @@ module wav_parser (
          S_state == SKIP || S_state == PAD || S_state == TAIL);
     always @(posedge I_clk or posedge I_reset) begin
         if (I_reset) begin
-            S_state<=IDLE; S_header_index<=0; S_pos<=0; S_size<=0; S_riff_end<=0;
+            S_state<=IDLE; S_header_index<=0; S_pos<=0; S_size<=0; S_last_pos<=0; S_riff_end<=0;
             S_left<=0; S_payload_index<=0; S_frame<=0; S_chunk_limit_q<=0; S_fmt_seen<=0; S_data_seen<=0;
             S_odd<=0; S_component<=0; S_l_lo<=0; S_l_hi<=0; S_r_lo<=0;
             O_done<=0; O_err<=0; O_error_code<=0; O_tag<=0;
@@ -65,6 +65,9 @@ module wav_parser (
                 case (S_state)
                     IDLE: if (I_start_valid) begin
                         S_size<=I_file_size; O_tag<=I_tag; S_pos<=0; S_header_index<=0;
+                        // File size is fixed per stream; avoid a subtractor in
+                        // every byte's last-marker check and payload enables.
+                        S_last_pos<=I_file_size-32'd1;
                         S_fmt_seen<=0; S_data_seen<=0; S_frame<=0; S_component<=0;
                         O_sample_valid<=0; O_sample_last<=0;
                         O_data_offset<=0; O_data_bytes<=0; O_total_frames<=0;
@@ -124,7 +127,7 @@ module wav_parser (
                     default: begin end
                 endcase
                 if (I_byte_valid && O_byte_ready) begin
-                    if (I_byte_last != (S_pos==S_size-1)) begin
+                    if (I_byte_last != (S_pos==S_last_pos)) begin
                         O_error_code<=5; O_sample_valid<=0; S_state<=FINISH;
                     end else begin
                         S_pos<=S_pos+1'b1;
@@ -165,7 +168,7 @@ module wav_parser (
                                 if (S_left==1) S_state<=NEXT;
                             end
                             PAD: S_state<=BOUNDARY;
-                            TAIL: if (S_pos==S_size-1) S_state<=DRAIN;
+                            TAIL: if (S_pos==S_last_pos) S_state<=DRAIN;
                             default: begin end
                         endcase
                     end

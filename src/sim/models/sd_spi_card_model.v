@@ -1,7 +1,9 @@
 `timescale 1ns/1ps
 // Test-only SD card peer for initialization and CMD17. Not a vendor card model.
 // Configurable legacy/SDSC/SDHC, delayed ACMD41, CRC damage and card removal.
-module sd_spi_card_model (
+module sd_spi_card_model #(
+    parameter integer OUTPUT_DELAY_NS=0
+) (
     input wire I_ncs,I_sclk,I_mosi,
     output wire O_miso,
     input wire I_present,I_legacy,I_high_capacity,I_allow_init,I_corrupt_crc,
@@ -13,7 +15,7 @@ module sd_spi_card_model (
     reg [7:0] S_tx=8'hff,S_rx=0;
     integer S_qread=0,S_qwrite=0,S_bits=0,S_packet_count=0,S_attempts=0;
     reg S_idle=1,S_app=0,S_selected=0;
-    assign O_miso=(!I_present || !S_selected || I_ncs) ? 1'b1 : S_tx[7];
+    assign #(OUTPUT_DELAY_NS) O_miso=(!I_present || !S_selected || I_ncs) ? 1'b1 : S_tx[7];
     task push;
         input [7:0] byte_value;
         begin

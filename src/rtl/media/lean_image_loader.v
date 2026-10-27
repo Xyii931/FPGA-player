@@ -117,7 +117,9 @@ module lean_image_loader (
                         S_px_data<={8'hff,S_rgba[31:8]}; O_pixels<=O_pixels+1'b1;
                     end else if(S_px_take) S_px_valid<=0;
                     if(S_abort) begin S_px_valid<=0; S_state<=RETIRE; end
-                    else if(S_parser_done && !S_px_valid && !S_px_accept) S_state<=RETIRE;
+                    // Parser completion is a pulse and can precede acceptance
+                    // of the last buffered pixel. Retain it across backpressure.
+                    else if((S_parser_seen || S_parser_done) && !S_px_valid && !S_px_accept) S_state<=RETIRE;
                 end
                 RETIRE:if(S_parser_seen && S_file_seen && I_writes_idle) begin
                     if(O_error==0 && O_pixels!=(S_rotation[0] ? 19'd172800 : 19'd307200)) O_error<=4'd5;

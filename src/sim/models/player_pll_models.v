@@ -15,11 +15,15 @@ module player_sys_pll (
     reg S_unlock = 1'b0;
     reg S_clk0 = 1'b0;
     reg S_clk1 = 1'b0;
+    reg S_shift_clk = 1'b0;
     always #5 if (!S_stop && !I_reset) S_clk0 = ~S_clk0;
-    always #5 if (!S_stop && !I_reset) S_clk1 = ~S_clk1;
+    always #6 if (!S_stop && !I_reset) S_clk1 = ~S_clk1;
     assign O_clk_100m = S_clk0;
     assign O_clk_125m = S_clk1;
-    assign O_clk_125m_sft = ~S_clk1;
+    // Transport delay preserves the 83.333333 MHz waveform with +7 ns offset.
+    // This ideal test configuration is not evidence for the primitive's phase.
+    always @(S_clk1) S_shift_clk <= #7 S_clk1;
+    assign O_clk_125m_sft = S_shift_clk;
     player_pll_lock_model #(.LOCK_EDGES(4)) u_lock (
         .I_refclk(I_refclk), .I_reset(I_reset | S_unlock),
         .O_locked(O_locked)

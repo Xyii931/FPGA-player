@@ -43,15 +43,15 @@ module lean_player_top (
     assign S_common_reset=S_rst_mem || S_rst_video;
     reset_sync u_host_reset(.I_clk(S_clk125),.I_async_reset(S_common_reset),.O_reset(S_host_reset));
     wire [3:0] S_key_release;
-    board_inputs u_inputs (
+    board_inputs #(.DEBOUNCE_CYCLES(1666667)) u_inputs (
         .I_clk(S_clk125),.I_reset(S_host_reset),.I_key_n(I_key_n),.I_switch(I_switch),.O_key_release(S_key_release),
         .O_keys(), .O_switch(), .O_switch_changed(), .O_switch_initialized()
     );
     wire S_rx_valid,S_rx_error,S_tx_valid,S_tx_ready;
     wire [7:0] S_rx_data,S_tx_data;
-    uart_rx u_rx(.I_clk(S_clk125),.I_reset(S_host_reset),.I_rx(I_uart_rx),
+    uart_rx #(.CLOCK_HZ(83333333)) u_rx(.I_clk(S_clk125),.I_reset(S_host_reset),.I_rx(I_uart_rx),
         .O_valid(S_rx_valid),.O_frame_error(S_rx_error),.O_data(S_rx_data));
-    uart_tx u_tx(.I_clk(S_clk125),.I_reset(S_host_reset),.I_valid(S_tx_valid),
+    uart_tx #(.CLOCK_HZ(83333333)) u_tx(.I_clk(S_clk125),.I_reset(S_host_reset),.I_valid(S_tx_valid),
         .O_ready(S_tx_ready),.I_data(S_tx_data),.O_tx(O_uart_tx));
     wire S_card,S_request,S_request_ready,S_byte_valid,S_byte_ready,S_sector_last,S_request_last,S_done,S_done_ready;
     wire S_cancel,S_cancel_ready,S_cancel_done,S_cancel_done_ready;

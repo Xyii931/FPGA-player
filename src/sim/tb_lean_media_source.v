@@ -202,7 +202,21 @@ module tb_lean_media_source;
         S_fat[8]=8; S_fat[32]=8'hff; S_fat[33]=8'hff; S_fat[34]=8'hff; S_fat[35]=8'h0f;
         S_card=1; wait(S_catalog); #1;
         if(S_count!=16 || !S_overflow || !S_audio_found) fail("catalog limit or chained root mismatch");
-        S_test_pass=1; $display("PASS: lean FAT32 root catalog, descriptors, streams, cancel and remount"); $finish;
+        // Exhaust both root clusters without a 00 marker, then point cluster
+        // 8 back to the first cluster. The directory stream must reject the
+        // loop even though each individual one-hop walker request succeeds.
+        S_cases=8; @(negedge S_clk); S_card=0;
+        repeat(10) @(negedge S_clk);
+        for(S_i=18;S_i<32;S_i=S_i+1) S_root[S_i*32]=8'he5;
+        S_fat[32]=2; S_fat[33]=0; S_fat[34]=0; S_fat[35]=0;
+        S_card=1; wait(S_catalog_error!=0); #1;
+        if(S_catalog || S_catalog_error!=9) fail("looping root directory accepted");
+        S_cases=9; @(negedge S_clk); S_card=0;
+        repeat(10) @(negedge S_clk);
+        S_fat[32]=8'hff; S_fat[33]=8'hff; S_fat[34]=8'hff; S_fat[35]=8'h0f;
+        S_card=1; wait(S_catalog); #1;
+        if(S_count!=16 || !S_overflow || S_catalog_error!=0) fail("directory EOC recovery failed");
+        S_test_pass=1; $display("PASS: lean FAT32 catalog, fragmented/looping root, descriptors, streams, cancel and remount"); $finish;
     end
     initial begin #20000000; fail("watchdog"); end
 endmodule

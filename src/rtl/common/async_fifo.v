@@ -27,15 +27,15 @@ module async_fifo #(
     wire S_write_fire = I_write_valid && O_write_ready;
     wire S_read_fire = O_read_valid && I_read_ready;
     wire [ADDR_BITS:0] S_write_next = S_write_binary + S_write_fire;
+    wire [ADDR_BITS:0] S_write_gray_next = (S_write_next >> 1) ^ S_write_next;
     wire [ADDR_BITS:0] S_read_next = S_read_binary + S_read_fire;
     wire [ADDR_BITS:0] S_read_gray_next = (S_read_next >> 1) ^ S_read_next;
     wire [ADDR_BITS:0] S_full_compare =
         {~S_read_gray_sync[ADDR_BITS:ADDR_BITS-1],S_read_gray_sync[ADDR_BITS-2:0]};
     // The full comparison feeds write_ready/write_fire, which drives the next
-    // write pointer. Registering the flag removes that cone from the pointer
-    // path at the cost of one level of write-side latency: the writer must
-    // stop one entry earlier. Only the audio BRAM32K FIFO selects this, where
-    // the low-water flow control already keeps the fill far below full.
+    // write pointer. Compare the NEXT pointer when registering full, so the
+    // flag asserts on the edge that consumes the final free entry. Comparing
+    // the current pointer would allow one more write and overwrite unread data.
     reg S_full_q;
     wire S_full_now=S_write_gray == S_full_compare;
     wire S_write_full=FULL_REGISTER ? S_full_q : S_full_now;
@@ -98,9 +98,9 @@ module async_fifo #(
             S_read_gray_meta <= 0; S_read_gray_sync <= 0;
             S_full_q <= 0;
         end else begin
-            if (FULL_REGISTER) S_full_q <= S_full_now;
+            if (FULL_REGISTER) S_full_q <= S_write_gray_next == S_full_compare;
             S_write_binary <= S_write_next;
-            S_write_gray <= (S_write_next >> 1) ^ S_write_next;
+            S_write_gray <= S_write_gray_next;
             S_read_gray_meta <= S_read_gray;
             S_read_gray_sync <= S_read_gray_meta;
         end
@@ -120,7 +120,7 @@ module async_fifo #(
     // synthesis translate_off
     initial begin
         if (DATA_BITS<1 || ADDR_BITS<2 || ADDR_BITS>16 ||
-            (USE_BRAM32K!=0 && USE_BRAM32K!=1)) begin
+            (USE_BRAM32K!=0 && USE_BRAM32K!=1) || (FULL_REGISTER!=0 && FULL_REGISTER!=1)) begin
             $display("FAIL: async_fifo invalid width/depth parameters"); $stop;
         end
     end

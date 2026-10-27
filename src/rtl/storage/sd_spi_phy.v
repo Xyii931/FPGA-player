@@ -37,7 +37,7 @@ module sd_spi_phy #(
 );
     localparam [3:0] IDLE=0,IDLE_CLOCKS=1,SEND_COMMAND=2,STOP_STUFF=3,
         WAIT_RESPONSE=4,EXTRA_RESPONSE=5,HOLD_RESPONSE=6,WAIT_TOKEN=7,
-        READ_DATA=8,HOLD_DATA=9,CRC_HIGH=10,CRC_LOW=11,WAIT_BUSY=12,TRAIL=13;
+        READ_DATA=8,HOLD_DATA=9,CRC_HIGH=10,CRC_LOW=11,WAIT_BUSY=12,TRAIL=13,CHECK_COMMAND=14,RETIRE=15;
     reg [3:0] S_state,S_age_state;
     reg [31:0] S_age;
     reg [15:0] S_divider,S_crc;
@@ -47,8 +47,9 @@ module sd_spi_phy #(
     reg [7:0] S_blocks_left,S_idle_left,S_crc_high;
     reg [8:0] S_data_index;
     reg [8:0] S_data_last;
-    reg S_crc_check,S_multi,S_internal_stop,S_drop,S_pending;
+    reg S_crc_check,S_multi,S_internal_stop,S_drop,S_pending,S_divider_bad;
     reg [3:0] S_abort_error;
+    reg [3:0] S_retire_error;
     wire S_transfer_ready,S_received,S_engine_busy;
     wire [7:0] S_rx;
     wire S_transfer_state=S_state==IDLE_CLOCKS || S_state==SEND_COMMAND || S_state==STOP_STUFF ||
@@ -56,14 +57,14 @@ module sd_spi_phy #(
         S_state==READ_DATA || S_state==CRC_HIGH || S_state==CRC_LOW || S_state==WAIT_BUSY || S_state==TRAIL;
     wire S_transfer_valid=S_transfer_state && !S_pending;
     wire [7:0] S_tx=S_state==SEND_COMMAND ? S_command[47:40] : 8'hff;
-    wire S_supported=I_cmd_index==0 || I_cmd_index==8 || I_cmd_index==55 || I_cmd_index==41 ||
-        I_cmd_index==58 || I_cmd_index==16 || I_cmd_index==17 || I_cmd_index==18 ||
-        I_cmd_index==12 || I_cmd_index==13 || I_cmd_index==9;
-    wire S_parameters_ok=S_supported && I_cmd_crc[0] && I_divider>=4 && !I_divider[0] &&
-        (I_response_bytes==1 || I_response_bytes==2 || I_response_bytes==5) &&
-        (I_cmd_index!=17 || I_block_count==1) &&
-        (I_cmd_index!=9 || (I_block_count==1 && I_response_bytes==1)) &&
-        (I_cmd_index!=18 || (I_block_count>=1 && I_block_count<=128));
+    wire S_supported=S_index==0 || S_index==8 || S_index==55 || S_index==41 ||
+        S_index==58 || S_index==16 || S_index==17 || S_index==18 ||
+        S_index==12 || S_index==13 || S_index==9;
+    wire S_parameters_ok=S_supported && S_command[0] && !S_divider_bad &&
+        (O_response_bytes==1 || O_response_bytes==2 || O_response_bytes==5) &&
+        (S_index!=17 || S_blocks_left==1) &&
+        (S_index!=9 || (S_blocks_left==1 && O_response_bytes==1)) &&
+        (S_index!=18 || (S_blocks_left>=1 && S_blocks_left<=128));
     assign O_idle_ready=!I_reset && S_state==IDLE && !I_abort;
     assign O_cmd_ready=O_idle_ready && !I_idle_valid;
     assign O_busy=S_state!=IDLE;
@@ -95,11 +96,8 @@ module sd_spi_phy #(
     task retire;
         input [3:0] error_code;
         begin
-            O_error<=error_code; O_response_valid<=0;
-            if(S_multi && !S_internal_stop) begin
-                S_internal_stop<=1; S_index<=12; S_command_byte<=0;
-                S_command<={8'h4c,32'd0,8'h01}; S_state<=SEND_COMMAND;
-            end else begin O_sd_ncs<=1; S_state<=TRAIL; end
+            // Error/CRC decoding must not also drive the physical CS enable.
+            S_retire_error<=error_code; O_response_valid<=0; S_state<=RETIRE;
         end
     endtask
 
@@ -108,7 +106,8 @@ module sd_spi_phy #(
             S_state<=IDLE; S_age_state<=IDLE; S_age<=0; S_divider<=250;
             S_crc<=0; S_command<=0; S_index<=0; S_command_byte<=0; S_response_index<=0;
             S_blocks_left<=0; S_idle_left<=0; S_crc_high<=0; S_data_index<=0; S_data_last<=511;
-            S_crc_check<=0; S_multi<=0; S_internal_stop<=0; S_drop<=0; S_pending<=0; S_abort_error<=6;
+            S_crc_check<=0; S_multi<=0; S_internal_stop<=0; S_drop<=0; S_pending<=0; S_abort_error<=6; S_divider_bad<=0;
+            S_retire_error<=0;
             O_response_valid<=0; O_response_data<=0; O_response_bytes<=0; O_byte_data<=0;
             O_block_done<=0; O_crc_ok<=0; O_done<=0; O_error<=0; O_tag<=0; O_sd_ncs<=1;
         end else begin
@@ -123,6 +122,7 @@ module sd_spi_phy #(
                 IDLE: begin
                     if(I_idle_valid && O_idle_ready) begin
                         S_divider<=(I_divider>=4 && !I_divider[0]) ? I_divider : 16'd250;
+                        S_divider_bad<=I_divider<4 || I_divider[0];
                         S_idle_left<=I_idle_bytes; O_tag<=I_tag; O_error<=0; S_drop<=0;
                         if(I_idle_bytes==0 || I_divider<4 || I_divider[0]) begin
                             O_error<=7; S_state<=TRAIL;
@@ -135,10 +135,13 @@ module sd_spi_phy #(
                         S_divider<=(I_divider>=4 && !I_divider[0]) ? I_divider : 16'd250;
                         S_drop<=0; S_abort_error<=6; S_multi<=0; S_internal_stop<=0;
                         S_command<={2'b01,I_cmd_index,I_cmd_argument,I_cmd_crc}; S_command_byte<=0;
-                        if(!S_parameters_ok) begin O_error<=7; S_state<=TRAIL; end
-                        else begin O_sd_ncs<=0; S_state<=SEND_COMMAND; end
+                        S_divider_bad<=I_divider<4 || I_divider[0];
+                        S_state<=CHECK_COMMAND;
                     end
                 end
+                CHECK_COMMAND: if(!S_parameters_ok) begin O_error<=7; S_state<=TRAIL; end
+                    else if(S_drop || I_abort) retire(4'd6);
+                    else begin O_sd_ncs<=0; S_state<=SEND_COMMAND; end
                 IDLE_CLOCKS: if(S_received) begin
                     if(S_idle_left==1) begin O_done<=1; S_state<=IDLE; end
                     else S_idle_left<=S_idle_left-8'd1;
@@ -215,6 +218,13 @@ module sd_spi_phy #(
                         end
                         else retire((S_drop || I_abort) ? S_abort_error : 4'd0);
                     end else if(S_age>=BUSY_TIMEOUT_CYCLES) begin O_error<=9; O_sd_ncs<=1; S_state<=TRAIL; end
+                end
+                RETIRE: begin
+                    O_error<=S_retire_error==0 && (S_drop || I_abort) ? S_abort_error : S_retire_error;
+                    if(S_multi && !S_internal_stop) begin
+                        S_internal_stop<=1; S_index<=12; S_command_byte<=0;
+                        S_command<={8'h4c,32'd0,8'h01}; S_state<=SEND_COMMAND;
+                    end else begin O_sd_ncs<=1; S_state<=TRAIL; end
                 end
                 TRAIL: if(S_received) begin O_done<=1; S_state<=IDLE; end
                 default: begin O_error<=5; O_sd_ncs<=1; S_state<=TRAIL; end

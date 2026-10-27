@@ -1,17 +1,29 @@
 # Starting constraints for the physical player; timing closure is NOT established.
 create_clock -name clk_50m -period 20 -waveform {0 10} [get_ports {I_clk_50m}]
 derive_clocks
-# Review all five PLL outputs, including memory 180 degrees and video 5:1.
-# The 25 MHz video and 125 MHz host domains cross only through async_fifo
-# Gray-pointer synchronizers (scanout commit/event/reply, status, audio) and
-# reset_sync chains. Keep every intra-domain and memory path analyzed; exclude
-# only this audited CDC pair. All other clock relationships remain analyzed.
-set_clock_groups -asynchronous \
-    -group [get_clocks {u_pll/u_video/u_pll.clkc[0]}] \
-    -group [get_clocks {u_pll/u_sys/u_pll.clkc[1]}]
+# Review all five PLL outputs: SD 100 MHz, host/memory 83.333333 MHz,
+# memory +7 ns / 210 degrees, and video 25/125 MHz.
+# Host/video and host/SD cross through FIFO pointers, held payloads, reset
+# synchronizers and independent status bits. Bound EVERY crossing to the
+# fastest participating source period (10 ns), including the Gray pointers.
+# Unlike clock_groups, datapath_only preserves the physical delay bounds;
+# TD excludes phase-based hold checks for these asynchronous protocols.
+set_max_delay -datapath_only 10 \
+    -from [get_clocks {u_pll/u_sys/u_pll.clkc[1]}] \
+    -to [get_clocks {u_pll/u_video/u_pll.clkc[0]}]
+set_max_delay -datapath_only 10 \
+    -from [get_clocks {u_pll/u_video/u_pll.clkc[0]}] \
+    -to [get_clocks {u_pll/u_sys/u_pll.clkc[1]}]
+set_max_delay -datapath_only 10 \
+    -from [get_clocks {u_pll/u_sys/u_pll.clkc[1]}] \
+    -to [get_clocks {u_pll/u_sys/u_pll.clkc[0]}]
+set_max_delay -datapath_only 10 \
+    -from [get_clocks {u_pll/u_sys/u_pll.clkc[0]}] \
+    -to [get_clocks {u_pll/u_sys/u_pll.clkc[1]}]
 # Pre-driven SDRAM WRITE data is launched at least one host cycle before the
 # WRITE command and held through the device edge. Constrain only the DQ pins
 # as a two-cycle path; the hard-IP 5 ns check still applies at the command edge.
+# Command/address/mask pins retain the single-cycle 7 ns phase budget.
 set_multicycle_path -setup 2 \
     -from [get_clocks {u_pll/u_sys/u_pll.clkc[1]}] \
     -to [get_pins {u_sdram/u_memory.dq[*]}]

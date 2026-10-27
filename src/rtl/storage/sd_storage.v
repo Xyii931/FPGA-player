@@ -1,7 +1,8 @@
 // Host-domain sector port to physical TF SPI. No FAT/files or video reset here.
 module sd_storage #(
     parameter integer COMMAND_ADDR_BITS=3,RETURN_ADDR_BITS=6,
-    parameter [15:0] INIT_DIVIDER=16'd250,WORK_DIVIDER=16'd4,
+    // 100 MHz / 6: 30 ns half-period for card delay plus FPGA/PCB travel.
+    parameter [15:0] INIT_DIVIDER=16'd250,WORK_DIVIDER=16'd6,
     parameter [31:0] POWERUP_CYCLES=32'd100000,INIT_TIMEOUT_CYCLES=32'd100000000,
     parameter [31:0] INIT_POLL_CYCLES=32'd100000,RETRY_CYCLES=32'd200000000,
     parameter [31:0] PROBE_CYCLES=32'd50000000,DELIVERY_TIMEOUT_CYCLES=32'd10000000,

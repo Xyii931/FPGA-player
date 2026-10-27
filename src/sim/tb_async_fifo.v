@@ -1,6 +1,6 @@
 `timescale 1ns/1ps
 module tb_async_fifo;
-    wire [9:0] S_done;
+    wire [12:0] S_done;
     reg S_test_pass=0;
     async_fifo_case #(2,3,13) u_min(S_done[0]);
     async_fifo_case #(4,13,3) u_fast_reader(S_done[1]);
@@ -15,6 +15,9 @@ module tb_async_fifo;
     // Production control payload widths: 375-bit requests and 434-bit results.
     async_fifo_case #(2,4,20,375,0) u_control_request(S_done[8]);
     async_fifo_case #(2,20,4,434,0) u_control_result(S_done[9]);
+    async_fifo_case #(2,3,13,48,0,1) u_registered_min(S_done[10]);
+    async_fifo_case #(4,13,3,48,1,1) u_registered_fast_reader(S_done[11]);
+    async_fifo_case #(11,4,20,48,1,1) u_registered_audio(S_done[12]);
     initial begin
         wait (&S_done);
         S_test_pass=1;
@@ -29,7 +32,7 @@ endmodule
 
 module async_fifo_case #(
     parameter integer ADDR=4, WRITE_HALF=4, READ_HALF=20,
-    parameter integer DATA_BITS=32, USE_BRAM32K=0
+    parameter integer DATA_BITS=32, USE_BRAM32K=0, FULL_REGISTER=0
 ) (output reg O_done);
     localparam integer DEPTH=2**ADDR;
     reg S_write_clk=0,S_read_clk=0,S_run_read=1,S_run_write=1,S_reset=0;
@@ -51,7 +54,8 @@ module async_fifo_case #(
         #1;
         forever begin #(READ_HALF); if (S_run_read) S_read_clk=~S_read_clk; end
     end
-    async_fifo #(.DATA_BITS(DATA_BITS),.ADDR_BITS(ADDR),.USE_BRAM32K(USE_BRAM32K)) u_dut (
+    async_fifo #(.DATA_BITS(DATA_BITS),.ADDR_BITS(ADDR),.USE_BRAM32K(USE_BRAM32K),
+        .FULL_REGISTER(FULL_REGISTER)) u_dut (
         .I_write_clk(S_write_clk),.I_read_clk(S_read_clk),.I_async_reset(S_reset),
         .I_write_valid(S_write_valid),.O_write_ready(S_write_ready),.I_write_data(S_write_data),
         .O_write_full(S_full),.O_write_level(S_write_level),

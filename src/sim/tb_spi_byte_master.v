@@ -8,11 +8,21 @@ module tb_spi_byte_master;
     reg [7:0] S_seen;
     integer S_bits=0,S_cycle=0,S_edge_cycle=0,S_expected_half=2,S_j;
     reg S_check_edges=0,S_test_pass=0;
+    // Conservative interface exercise: 7 ns outbound clock/data, 14 ns card
+    // clock-to-data, and 5 ns return path. Not a routed timing simulation.
+    reg S_physical_delay=0;
+    wire S_pad_clk,S_pad_mosi,S_delayed_miso;
+    wire S_peer_clk=S_physical_delay ? S_pad_clk : S_sclk;
+    wire S_peer_mosi=S_physical_delay ? S_pad_mosi : S_mosi;
+    wire S_input_miso=S_physical_delay ? S_delayed_miso : S_miso;
+    assign #7 S_pad_clk=S_sclk;
+    assign #7 S_pad_mosi=S_mosi;
+    assign #19 S_delayed_miso=S_miso;
     always #5 S_clk=~S_clk;
     spi_byte_master u_dut (
         .I_clk(S_clk),.I_reset(S_reset),.I_tx_valid(S_tx_valid),.O_tx_ready(S_tx_ready),
         .I_tx_data(S_tx),.I_divider(S_divider),.O_rx_valid(S_rx_valid),.I_rx_ready(S_rx_ready),
-        .O_rx_data(S_rx),.O_sclk(S_sclk),.O_mosi(S_mosi),.I_miso(S_miso),.O_busy(S_busy));
+        .O_rx_data(S_rx),.O_sclk(S_sclk),.O_mosi(S_mosi),.I_miso(S_input_miso),.O_busy(S_busy));
     task fail;
         input [511:0] message;
         begin $display("FAIL: %0s",message); $stop; end
@@ -22,10 +32,10 @@ module tb_spi_byte_master;
         if(S_edge_cycle!=0 && S_cycle-S_edge_cycle!=S_expected_half) fail("SPI half period / latched divider");
         S_edge_cycle=S_cycle;
     end
-    always @(posedge S_sclk) begin
-        S_seen={S_seen[6:0],S_mosi}; S_bits=S_bits+1;
+    always @(posedge S_peer_clk) begin
+        S_seen={S_seen[6:0],S_peer_mosi}; S_bits=S_bits+1;
     end
-    always @(negedge S_sclk) if(S_bits<8) S_miso=S_reply[7-S_bits];
+    always @(negedge S_peer_clk) if(S_bits<8) S_miso=S_reply[7-S_bits];
     task transfer;
         input [7:0] tx,reply;
         input [15:0] divider;
@@ -59,7 +69,12 @@ module tb_spi_byte_master;
         if(S_sclk || !S_mosi || S_rx_valid) fail("reset did not abort active SPI");
         S_tx_valid=0; #20; S_reset=0;
         transfer(8'ha5,8'h5a,4);
-        S_test_pass=1; $display("PASS: SPI mode0 byte, latched periods, bit order, backpressure and reset"); $finish;
+        S_physical_delay=1;
+        #30;
+        transfer(8'h96,8'h3c,6);
+        transfer(8'h69,8'ha5,6);
+        S_physical_delay=0;
+        S_test_pass=1; $display("PASS: SPI mode0 byte, latched periods, bit order, backpressure, reset and delayed card return"); $finish;
     end
     initial begin #200000; fail("SPI byte watchdog"); end
 endmodule
