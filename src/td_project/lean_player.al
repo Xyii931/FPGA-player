@@ -412,9 +412,6 @@
         <CREATEINDEX>user</CREATEINDEX>
     </TOP_MODULE>
     <Property>
-        <PlaceProperty>
-            <seed>7</seed>
-        </PlaceProperty>
     </Property>
     <Device_Settings>
     </Device_Settings>
@@ -423,6 +420,10 @@
     <Runs>
         <Run Name="syn_1" Type="Synthesis" ConstraintSet="constraint_1" Description="" Active="true">
             <Strategy Name="Default_Synthesis_Strategy">
+                <GateProperty>
+                    <map_mode>area_prior</map_mode>
+                    <pack_effort>high</pack_effort>
+                </GateProperty>
             </Strategy>
             <UserParams>
             </UserParams>
@@ -439,6 +440,16 @@
             </UserParams>
         </Run>
     </Runs>
+    <MultiSeed>
+        <Property Enable="true" GenBit="true" EndStep="route" Random="false" Num="1" Init="1" Jobs="1" Save="1" Step="1">
+            <Filter enabled="false">
+                <congestion>100</congestion>
+                <place_swns>0</place_swns>
+                <route_swns>0</route_swns>
+            </Filter>
+        </Property>
+        <Seeds>1 </Seeds>
+    </MultiSeed>
     <Project_Settings>
     </Project_Settings>
 </Project>

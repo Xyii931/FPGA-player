@@ -5,9 +5,21 @@
 | [lean_player.al](lean_player.al) | `lean_player_top` | 图片/音频播放器 | `../constraints/player.adc`、`player.sdc` |
 | [p0_hdmi.al](p0_hdmi.al) | `p0_hdmi_top` | 无TF、无文件音频的基础视频诊断 | `../constraints/p0_hdmi.adc`、`p0_hdmi.sdc` |
 
-目标器件为 `EG4S20BG256`，当前使用TD V6.2.168116。主工程有46份Verilog源文件，含三份厂商HDMI依赖；诊断工程10份。测试台和功能替身不加入综合工程。所有相对路径以本目录为基准，保持仓库结构即可打开。
+目标器件为 `EG4S20BG256`，已有通过时序的物理实现使用TD V6.2.168116；其他版本需要重新核对资源与最终时序。主工程有46份Verilog源文件，含三份厂商HDMI依赖；诊断工程10份。测试台和功能替身不加入综合工程。所有相对路径以本目录为基准，保持仓库结构即可打开。
 
 ## 综合命令
+
+主工程已配置TD内置的单seed流程：只运行seed 1、一个任务，先布线，再独立执行 `fix_hold`，最后生成bit。该配置保存在 `.al` 的 `MultiSeed` 中，Reset后仍保留；不修改TD安装文件。电脑侧验证结果及限制见[当前项目状况](../../docs/当前项目状况.md)。
+
+### GUI操作
+
+1. 关闭当前工程，重新打开 `lean_player.al`，确保TD重新读取工程配置；本机英文验证目录为 `D:/FPGA-player/src/td_project/lean_player.al`。
+2. 首次使用更新后的工程，Reset `syn_1`，从源码重新综合，再运行 `phy_1`。只有已确认综合参数及源码一致时，才可只Reset并重跑 `phy_1`。
+3. 运行日志应显示只有一个seed且值为1，子任务依次执行 `route`、独立 `fix_hold` 和 `bitgen`。报告及bit位于 `lean_player_Runs/phy_1/seed_1/`；检查 `lean_player_phy.ts` 和 `lean_player_pr.timing` 中最终setup/hold余量均非负。
+
+`MultiSeed` 是TD的功能名称，这里只配置一次运行，不进行多seed搜索。不要关闭该开关，否则会恢复此前失败的默认流程。bit生成成功仍须另查最终时序及严重告警。
+
+### 脚本操作
 
 从仓库根目录运行：
 
@@ -25,11 +37,26 @@
 
 此选项从当前源码重新综合，继续布局、布线并输出最终时序报告；不能与 `-Module` 同用。它不生成bit，也不下载。结果的 `Stage=Routed` 时，`Passed`还要求最终setup/hold非负；缺少时序报告或时序未通过均返回失败退出码。约束覆盖和电气检查仍须单独完成。
 
-主播放器脚本设置 `gate map_mode area_prior` 和 `gate pack_effort high`，减少切片占用，为hold修复留出空间。当前映射数据库已验证的布局配置为seed 1、`place pr_strategy 2`、`place effort high`，脚本采用相同默认值；原默认布局在本次SD分频调整后触发局部增量布线冲突。TD 6.2.168116的自动hold修复也曾引发布线冲突，因此脚本先执行 `route` 并保存 `*_route.db`，随后单独执行手册支持的 `fix_hold`，最终时序报告在修复后生成。直接使用TD图形界面运行时，应同步这些综合和布局设置，并采用相同的分步布线/hold修复流程。EG4在切片占用超过90%时可能跳过hold修复。
+主播放器脚本设置 `gate map_mode area_prior` 和 `gate pack_effort high`，减少切片占用，为hold修复留出空间。当前映射数据库已验证的布局配置为seed 1、`place pr_strategy 2`、`place effort high`，脚本采用相同默认值；原默认布局在本次SD分频调整后触发局部增量布线冲突。TD 6.2.168116的自动hold修复也曾引发布线冲突，因此脚本先执行 `route` 并保存 `*_route.db`，随后单独执行手册支持的 `fix_hold`，最终时序报告在修复后生成。图形界面由工程内的单seed配置调用TD自带的分步布线/hold修复流程。EG4在切片占用超过90%时可能跳过hold修复。
 
 脚本通过 `open_project -single_run` 运行，布局参数直接设置到当前内存上下文；该模式下仅使用 `set_param -run phy_1 ...` 曾出现保存值更新、实际布局仍使用默认值的情况。布局前保存 `*_place.params` 并在日志打印实际参数，应据此确认配置生效。
 
-`lean_player.al` 的 `phy_1` 也保存了seed 1、策略2和high布局力度，供图形界面使用；面积映射和分步hold修复仍按上述流程核对。
+`lean_player.al` 的 `syn_1` 保存了面积优先映射和high打包力度，`phy_1` 保存了策略2和high布局力度，`MultiSeed` 固定seed 1。GUI子任务应出现 `set_param place seed 1`；子任务自身的 `flow enable_seed` 显示off不表示没有使用seed，应结合上层单seed配置和实际place命令核对。脚本入口则在单次运行上下文中显式启用seed，两种入口都需要核对最终时序。
+
+### GUI布线失败或生成bit后时序未通过
+
+TD V6.2.168116的本机GUI运行中，即使面积设置已生效、slice占用只有82.74%，仍在route内部自动hold修复插入缓冲后出现 `PHY-8023` 与 `RUN-8102`。这是该批次的布线资源冲突，不能把报错中的通用资源提示直接当作容量超限。当前GUI单seed流程与正式脚本均关闭route内的自动修复，再独立执行 `fix_hold`，最终报告仍检查hold。仅关闭自动修复而省略独立 `fix_hold` 不能替代完整流程。
+
+2026-10-31提供的TD V6.2.178840 GUI日志中，LUT为16309/19600，slice占用91.53%，最终setup/hold余量为−0.298/−0.044 ns，工具明确提示占用超过90%而跳过hold修复。日志还显示 `enable_seed=off`、路由内自动hold修复开启。这次运行与脚本流程不同；日志未包含综合阶段，不能仅凭它确定面积映射设置是否生效。两条SDRAM封装位置告警PHY-7002仍需单独确认。
+
+遇到这种情况，应从源码重新综合，不能只对旧 `*_gate.db` 重跑布局。使用当前工程文件和脚本，并指定本机TD命令行程序，例如：
+
+```powershell
+& ./src/td_project/run_synthesis.ps1 -Project lean_player -PlaceAndRoute `
+    -TdPath 'D:/TD_6.2.1/bin/td_commands_prompt.exe'
+```
+
+请先确认该可执行文件在本机存在。核对新批次日志中的 `map_mode area_prior`、`pack_effort high`、启用的seed 1，以及 `route` 之后独立执行的 `fix_hold`。检查 `summary.json` 中的 `Stage`、`TimingMet`、错误和严重告警；**bit生成成功不代表时序通过。** 若相同流程在其他TD版本仍失败，应保留该批次的 `console.log`、`*_gate.area`、`*_phy.area`、`*_phy.ts`、`*_pr.timing`，按具体失败路径继续定位。
 
 默认项目为 `lean_player`。可选模块检查仅保留实际依赖：
 
