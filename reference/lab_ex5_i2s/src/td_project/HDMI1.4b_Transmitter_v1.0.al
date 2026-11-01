@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Project Version="3" Minor="2" Path="C:/Users/zbrmyyds/Desktop/anlu/anlu_exam_title/HDMI1.4b_Transmitter/lab_ex5_i2s/src/td_project">
+<Project Version="3" Minor="2" Path="E:/dsh-project-en-path/fpga-player/FPGA-player/reference/lab_ex5_i2s/src/td_project">
     <Project_Created_Time></Project_Created_Time>
-    <TD_Version>6.2.168116</TD_Version>
+    <TD_Version>6.2.178840</TD_Version>
     <Name>HDMI1.4b_Transmitter_v1.0</Name>
     <HardWare>
         <Family>EG4</Family>

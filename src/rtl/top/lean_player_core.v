@@ -102,7 +102,7 @@ module lean_player_core #(
     assign S_byte_ready=S_byte_context==1 ? S_audio_byte_ready : S_image_byte_ready;
     lean_media_source u_source (
         .I_clk(I_host_clk),.I_reset(S_hrst),.I_card_ready(I_card_ready),.I_capacity_sectors(I_capacity_sectors),
-        .O_catalog_ready(S_catalog),.O_image_count(O_count),.O_audio_found(S_audio_found),.O_catalog_error(S_catalog_error),
+        .O_catalog_ready(S_catalog),.O_image_count(O_count),.O_audio_found(S_audio_found),.O_catalog_error(S_catalog_error),.O_dbg_type(S_mount_type),
         .I_command_valid(S_command),.O_command_ready(S_command_ready),.I_command_audio(S_select_audio),
         .I_image_index(S_job_index),.I_offset(S_select_audio ? S_audio_offset : 32'd0),
         .I_length(S_select_audio ? S_audio_length : 32'hffffffff),
@@ -177,7 +177,7 @@ module lean_player_core #(
     lean_status_osd u_status_osd (
         .I_de(O_de),.I_valid(O_valid),.I_x(O_x),.I_y(O_y),.I_rgb(S_rgb),
         .I_current(S_video_status[20:17]),.I_count(S_video_status[16:12]),.I_auto(S_video_status[11]),
-        .I_rotation(S_video_status[10:9]),.I_volume(S_video_status[8:6]),.I_mute(S_video_status[5]),
+        .I_dbg_type(S_mount_type),.I_rotation(S_video_status[10:9]),.I_volume(S_video_status[8:6]),.I_mute(S_video_status[5]),
         .I_busy(S_video_status[4]),.I_error(S_video_status[3:0]),.O_rgb(O_rgb)
     );
     lean_audio u_audio (
@@ -244,3 +244,6 @@ module lean_player_core #(
         end
     end
 endmodule
+
+
+

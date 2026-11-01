@@ -13,6 +13,7 @@ module lean_media_source (
     input wire [3:0] I_image_index,
     input wire [31:0] I_offset,I_length,
     output wire O_begin_valid,
+    output wire [7:0] O_dbg_type,
     input wire I_begin_ready,
     output wire O_begin_audio,
     output reg [31:0] O_file_size,
@@ -159,7 +160,7 @@ module lean_media_source (
         .I_clk(I_clk),.I_reset(I_reset),.I_card_ready(I_card_ready),.I_capacity_sectors(I_capacity_sectors),
         .I_start_valid(S_phase==MOUNT_START),.O_start_ready(S_mount_ready),
         .O_result_valid(S_mount_done),.I_result_ready(S_phase==MOUNT_WAIT),
-        .O_error(S_mount_error),.O_mounted(S_mounted),.O_fat_lba(S_fat),.O_data_lba(S_data),
+        .O_error(S_mount_error),.O_dbg_type(O_dbg_type),.O_mounted(S_mounted),.O_fat_lba(S_fat),.O_data_lba(S_data),
         .O_cluster_count(S_clusters),.O_root_cluster(S_root),.O_cluster_shift(S_shift),
         .O_read_valid(S_m_valid),.I_read_ready(S_m_ready),.O_read_lba(S_m_lba),
         .I_read_result_valid(S_m_result),.O_read_result_ready(S_m_take),
@@ -368,3 +369,5 @@ module lean_media_source (
         end
     end
 endmodule
+
+

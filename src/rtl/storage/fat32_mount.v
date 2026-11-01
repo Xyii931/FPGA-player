@@ -12,6 +12,7 @@ module fat32_mount (
     output reg O_mounted,
     output reg [31:0] O_partition_lba,O_volume_sectors,O_fat_lba,O_data_lba,
     output reg [31:0] O_cluster_count,O_root_cluster,
+    output reg [7:0] O_dbg_type,
     output reg [7:0] O_sectors_per_cluster,
     output reg [2:0] O_cluster_shift,
     output wire O_read_valid,
@@ -46,6 +47,7 @@ module fat32_mount (
     wire [32:0] S_selected_partition_end={1'b0,S_partition_start}+{1'b0,S_partition_size};
     reg S_spc_valid;
     reg [2:0] S_shift;
+    reg [23:0] S_wait_count;
     // Geometry stays in the widths the fields can actually reach: 32-bit
     // totals, 33/34-bit byte/sector sums, 39-bit FAT entry count. This keeps
     // the same range checks without 64-bit carry chains.
@@ -105,7 +107,7 @@ module fat32_mount (
             S_fats<=0; S_root_entries<=0; S_total16<=0; S_fat16<=0;
             S_total32<=0; S_fat_size<=0; S_flags<=0; S_version<=0; S_root_cluster<=0;
             S_entry_boot<=0; S_partition_boot<=0; S_partition_start<=0;
-            S_partition_size<=0; S_partition_found<=0; S_candidate_index<=0;
+            S_partition_size<=0; S_partition_found<=0; O_dbg_type<=0; S_candidate_index<=0;
         end
     endtask
     task finish;
@@ -117,6 +119,7 @@ module fat32_mount (
             S_state<=IDLE; S_scan<=0; S_partition_sector<=0;
             S_capacity<=0; S_partition_length<=0; S_partition_lba<=0;
             O_error<=0; O_storage_error<=0; O_mounted<=0; O_read_lba<=0;
+            S_wait_count<=24'd0;
             O_partition_lba<=0; O_volume_sectors<=0; O_fat_lba<=0; O_data_lba<=0;
             O_cluster_count<=0; O_root_cluster<=0; O_sectors_per_cluster<=0; O_cluster_shift<=0;
             clear_fields;
@@ -130,12 +133,22 @@ module fat32_mount (
                     else if(I_capacity_sectors==0 || I_capacity_sectors>33'h100000000) finish(8'd5);
                     else S_state<=FETCH;
                 end
-                FETCH: if(I_read_ready) S_state<=FETCH_WAIT;
-                FETCH_WAIT: if(I_read_result_valid) begin
-                    O_storage_error<=I_storage_error;
-                    if(!I_card_ready || I_read_error==1) finish(8'd1);
-                    else if(I_read_error!=0) finish(8'd2);
-                    else begin clear_fields; S_scan<=0; S_state<=SCAN_ADDRESS; end
+                FETCH: begin
+                    // A card loss or a stalled sector handshake must not hang the
+                    // mount forever; both end the attempt so the caller can retry.
+                    if(!I_card_ready) finish(8'd1);
+                    else if(I_read_ready) begin S_wait_count<=24'd0; S_state<=FETCH_WAIT; end
+                    else if(&S_wait_count) finish(8'd9);
+                    else S_wait_count<=S_wait_count+1'b1;
+                end
+                FETCH_WAIT: begin
+                    if(I_read_result_valid) begin
+                        O_storage_error<=I_storage_error;
+                        if(!I_card_ready || I_read_error==1) finish(8'd1);
+                        else if(I_read_error!=0) finish(8'd2);
+                        else begin clear_fields; S_scan<=0; S_wait_count<=24'd0; S_state<=SCAN_ADDRESS; end
+                    end else if(&S_wait_count) finish(8'd9);
+                    else S_wait_count<=S_wait_count+1'b1;
                 end
                 SCAN_ADDRESS: S_state<=SCAN_BYTE;
                 SCAN_BYTE: begin
@@ -156,6 +169,8 @@ module fat32_mount (
                         510:S_signature[7:0]<=I_buffer_data; 511:S_signature[15:8]<=I_buffer_data;
                         default:begin end
                     endcase
+                    if(S_scan>=446 && S_scan<=509 && S_partition_offset[3:0]==4'd4 && I_buffer_data!=8'h00)
+                        O_dbg_type<=I_buffer_data;
                     if(S_scan>=446 && S_scan<=509) begin
                         case(S_partition_offset[3:0])
                             0:S_entry_boot<=I_buffer_data;
@@ -225,3 +240,7 @@ module fat32_mount (
         end
     end
 endmodule
+
+
+
+

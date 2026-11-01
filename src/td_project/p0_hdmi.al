@@ -1,113 +1,186 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<Project Version="3" Minor="2" Path=".">
-    <Project_Created_Time />
-    <TD_Version>6.2.168116</TD_Version>
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<Project Version="3" Minor="2" Path="E:/dsh-project-en-path/fpga-player/FPGA-player/src/td_project">
+    <Project_Created_Time></Project_Created_Time>
+    <TD_Version>6.2.178840</TD_Version>
     <Name>p0_hdmi</Name>
     <HardWare>
         <Family>EG4</Family>
         <Device>EG4S20BG256</Device>
-        <Speed />
+        <Speed></Speed>
     </HardWare>
     <Source_Files>
         <Verilog>
             <File Path="../rtl/common/reset_sync.v">
                 <FileInfo>
-                    <Attr Name="UsedInSyn" Val="true" />
-                    <Attr Name="UsedInP&amp;R" Val="true" />
-                    <Attr Name="BelongTo" Val="design_1" />
-                    <Attr Name="CompileOrder" Val="1" />
+                    <Attr Name="UsedInSyn" Val="true"/>
+                    <Attr Name="UsedInP&R" Val="true"/>
+                    <Attr Name="BelongTo" Val="design_1"/>
+                    <Attr Name="CompileOrder" Val="1"/>
                 </FileInfo>
             </File>
             <File Path="../rtl/common/reset_gen.v">
                 <FileInfo>
-                    <Attr Name="UsedInSyn" Val="true" />
-                    <Attr Name="UsedInP&amp;R" Val="true" />
-                    <Attr Name="BelongTo" Val="design_1" />
-                    <Attr Name="CompileOrder" Val="2" />
+                    <Attr Name="UsedInSyn" Val="true"/>
+                    <Attr Name="UsedInP&R" Val="true"/>
+                    <Attr Name="BelongTo" Val="design_1"/>
+                    <Attr Name="CompileOrder" Val="2"/>
                 </FileInfo>
             </File>
             <File Path="../rtl/common/pll_tree.v">
                 <FileInfo>
-                    <Attr Name="UsedInSyn" Val="true" />
-                    <Attr Name="UsedInP&amp;R" Val="true" />
-                    <Attr Name="BelongTo" Val="design_1" />
-                    <Attr Name="CompileOrder" Val="3" />
+                    <Attr Name="UsedInSyn" Val="true"/>
+                    <Attr Name="UsedInP&R" Val="true"/>
+                    <Attr Name="BelongTo" Val="design_1"/>
+                    <Attr Name="CompileOrder" Val="3"/>
                 </FileInfo>
             </File>
             <File Path="../ip/player_sys_pll.v">
                 <FileInfo>
-                    <Attr Name="UsedInSyn" Val="true" />
-                    <Attr Name="UsedInP&amp;R" Val="true" />
-                    <Attr Name="BelongTo" Val="design_1" />
-                    <Attr Name="CompileOrder" Val="4" />
+                    <Attr Name="UsedInSyn" Val="true"/>
+                    <Attr Name="UsedInP&R" Val="true"/>
+                    <Attr Name="BelongTo" Val="design_1"/>
+                    <Attr Name="CompileOrder" Val="4"/>
                 </FileInfo>
             </File>
             <File Path="../ip/player_video_pll.v">
                 <FileInfo>
-                    <Attr Name="UsedInSyn" Val="true" />
-                    <Attr Name="UsedInP&amp;R" Val="true" />
-                    <Attr Name="BelongTo" Val="design_1" />
-                    <Attr Name="CompileOrder" Val="5" />
+                    <Attr Name="UsedInSyn" Val="true"/>
+                    <Attr Name="UsedInP&R" Val="true"/>
+                    <Attr Name="BelongTo" Val="design_1"/>
+                    <Attr Name="CompileOrder" Val="5"/>
                 </FileInfo>
             </File>
             <File Path="../rtl/display/video_pattern_axis.v">
                 <FileInfo>
-                    <Attr Name="UsedInSyn" Val="true" />
-                    <Attr Name="UsedInP&amp;R" Val="true" />
-                    <Attr Name="BelongTo" Val="design_1" />
-                    <Attr Name="CompileOrder" Val="6" />
+                    <Attr Name="AutoExcluded" Val="true"/>
+                    <Attr Name="UsedInSyn" Val="true"/>
+                    <Attr Name="UsedInP&R" Val="true"/>
+                    <Attr Name="BelongTo" Val="design_1"/>
+                    <Attr Name="CompileOrder" Val="6"/>
                 </FileInfo>
             </File>
             <File Path="../rtl/top/p0_hdmi_top.v">
                 <FileInfo>
-                    <Attr Name="UsedInSyn" Val="true" />
-                    <Attr Name="UsedInP&amp;R" Val="true" />
-                    <Attr Name="BelongTo" Val="design_1" />
-                    <Attr Name="CompileOrder" Val="7" />
+                    <Attr Name="UsedInSyn" Val="true"/>
+                    <Attr Name="UsedInP&R" Val="true"/>
+                    <Attr Name="BelongTo" Val="design_1"/>
+                    <Attr Name="CompileOrder" Val="7"/>
                 </FileInfo>
             </File>
             <File Path="../../reference/lab_ex5_i2s/src/user_source/hdl_source/hdmi_phy_warpper.v">
                 <FileInfo>
-                    <Attr Name="UsedInSyn" Val="true" />
-                    <Attr Name="UsedInP&amp;R" Val="true" />
-                    <Attr Name="BelongTo" Val="design_1" />
-                    <Attr Name="CompileOrder" Val="8" />
+                    <Attr Name="UsedInSyn" Val="true"/>
+                    <Attr Name="UsedInP&R" Val="true"/>
+                    <Attr Name="BelongTo" Val="design_1"/>
+                    <Attr Name="CompileOrder" Val="8"/>
                 </FileInfo>
             </File>
             <File Path="../../reference/lab_ex5_i2s/src/user_source/hdl_source/lane_lvds_10_1.v">
                 <FileInfo>
-                    <Attr Name="UsedInSyn" Val="true" />
-                    <Attr Name="UsedInP&amp;R" Val="true" />
-                    <Attr Name="BelongTo" Val="design_1" />
-                    <Attr Name="CompileOrder" Val="9" />
+                    <Attr Name="UsedInSyn" Val="true"/>
+                    <Attr Name="UsedInP&R" Val="true"/>
+                    <Attr Name="BelongTo" Val="design_1"/>
+                    <Attr Name="CompileOrder" Val="9"/>
                 </FileInfo>
             </File>
             <File Path="../../reference/lab_ex5_i2s/src/user_source/hdl_source/hdmi1.4b_transmitter_core/hdmi_1_4b_transmitter_core_wrapper.enc.v">
                 <FileInfo>
-                    <Attr Name="UsedInSyn" Val="true" />
-                    <Attr Name="UsedInP&amp;R" Val="true" />
-                    <Attr Name="BelongTo" Val="design_1" />
-                    <Attr Name="CompileOrder" Val="10" />
+                    <Attr Name="UsedInSyn" Val="true"/>
+                    <Attr Name="UsedInP&R" Val="true"/>
+                    <Attr Name="BelongTo" Val="design_1"/>
+                    <Attr Name="CompileOrder" Val="10"/>
+                </FileInfo>
+            </File>
+            <File Path="../rtl/common/async_fifo.v">
+                <FileInfo>
+                    <Attr Name="UsedInSyn" Val="true"/>
+                    <Attr Name="UsedInP&R" Val="true"/>
+                    <Attr Name="BelongTo" Val="design_1"/>
+                    <Attr Name="CompileOrder" Val="11"/>
+                </FileInfo>
+            </File>
+            <File Path="../rtl/storage/sd_csd_decode.v">
+                <FileInfo>
+                    <Attr Name="UsedInSyn" Val="true"/>
+                    <Attr Name="UsedInP&R" Val="true"/>
+                    <Attr Name="BelongTo" Val="design_1"/>
+                    <Attr Name="CompileOrder" Val="12"/>
+                </FileInfo>
+            </File>
+            <File Path="../rtl/storage/sd_spi_phy.v">
+                <FileInfo>
+                    <Attr Name="UsedInSyn" Val="true"/>
+                    <Attr Name="UsedInP&R" Val="true"/>
+                    <Attr Name="BelongTo" Val="design_1"/>
+                    <Attr Name="CompileOrder" Val="13"/>
+                </FileInfo>
+            </File>
+            <File Path="../rtl/storage/sd_sector_reader.v">
+                <FileInfo>
+                    <Attr Name="UsedInSyn" Val="true"/>
+                    <Attr Name="UsedInP&R" Val="true"/>
+                    <Attr Name="BelongTo" Val="design_1"/>
+                    <Attr Name="CompileOrder" Val="14"/>
+                </FileInfo>
+            </File>
+            <File Path="../rtl/storage/sector_cdc_bridge.v">
+                <FileInfo>
+                    <Attr Name="UsedInSyn" Val="true"/>
+                    <Attr Name="UsedInP&R" Val="true"/>
+                    <Attr Name="BelongTo" Val="design_1"/>
+                    <Attr Name="CompileOrder" Val="15"/>
+                </FileInfo>
+            </File>
+            <File Path="../rtl/storage/sd_storage.v">
+                <FileInfo>
+                    <Attr Name="UsedInSyn" Val="true"/>
+                    <Attr Name="UsedInP&R" Val="true"/>
+                    <Attr Name="BelongTo" Val="design_1"/>
+                    <Attr Name="CompileOrder" Val="16"/>
+                </FileInfo>
+            </File>
+            <File Path="../rtl/storage/spi_byte_master.v">
+                <FileInfo>
+                    <Attr Name="UsedInSyn" Val="true"/>
+                    <Attr Name="UsedInP&R" Val="true"/>
+                    <Attr Name="BelongTo" Val="design_1"/>
+                    <Attr Name="CompileOrder" Val="17"/>
+                </FileInfo>
+            </File>
+            <File Path="../rtl/storage/fat32_sector_port.v">
+                <FileInfo>
+                    <Attr Name="UsedInSyn" Val="true"/>
+                    <Attr Name="UsedInP&R" Val="true"/>
+                    <Attr Name="BelongTo" Val="design_1"/>
+                    <Attr Name="CompileOrder" Val="18"/>
+                </FileInfo>
+            </File>
+            <File Path="../rtl/storage/fat32_mount.v">
+                <FileInfo>
+                    <Attr Name="UsedInSyn" Val="true"/>
+                    <Attr Name="UsedInP&R" Val="true"/>
+                    <Attr Name="BelongTo" Val="design_1"/>
+                    <Attr Name="CompileOrder" Val="19"/>
                 </FileInfo>
             </File>
         </Verilog>
         <ADC_FILE>
             <File Path="../constraints/p0_hdmi.adc">
                 <FileInfo>
-                    <Attr Name="UsedInSyn" Val="true" />
-                    <Attr Name="UsedInP&amp;R" Val="true" />
-                    <Attr Name="BelongTo" Val="constraint_1" />
-                    <Attr Name="CompileOrder" Val="1" />
+                    <Attr Name="UsedInSyn" Val="true"/>
+                    <Attr Name="UsedInP&R" Val="true"/>
+                    <Attr Name="BelongTo" Val="constraint_1"/>
+                    <Attr Name="CompileOrder" Val="2"/>
                 </FileInfo>
             </File>
         </ADC_FILE>
         <SDC_FILE>
             <File Path="../constraints/p0_hdmi.sdc">
                 <FileInfo>
-                    <Attr Name="UsedInSyn" Val="true" />
-                    <Attr Name="UsedInP&amp;R" Val="true" />
-                    <Attr Name="BelongTo" Val="constraint_1" />
-                    <Attr Name="CompileOrder" Val="1" />
+                    <Attr Name="UsedInSyn" Val="true"/>
+                    <Attr Name="UsedInP&R" Val="true"/>
+                    <Attr Name="BelongTo" Val="constraint_1"/>
+                    <Attr Name="CompileOrder" Val="1"/>
                 </FileInfo>
             </File>
         </SDC_FILE>
@@ -146,3 +219,6 @@
     <Project_Settings>
     </Project_Settings>
 </Project>
+
+
+

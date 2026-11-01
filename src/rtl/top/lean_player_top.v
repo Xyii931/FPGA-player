@@ -61,8 +61,8 @@ module lean_player_top (
     wire [1:0] S_context,S_priority,S_byte_context,S_done_context,S_cancel_context,S_cancel_done_context;
     wire [15:0] S_tag,S_byte_tag,S_done_tag,S_cancel_tag,S_cancel_done_tag;
     wire [3:0] S_sd_error;
-    sd_storage u_storage (
-        .I_host_clk(S_clk125),.I_sd_clk(S_clk100),.I_async_reset(S_host_reset),
+    sd_storage #(.WORK_DIVIDER(16'd64)) u_storage (
+        .I_host_clk(S_clk125),.I_sd_clk(I_clk_50m),.I_async_reset(S_host_reset),
         .I_request_valid(S_request),.O_request_ready(S_request_ready),.I_lba(S_lba),.I_count(S_count),
         .I_context(S_context),.I_priority(S_priority),.I_tag(S_tag),.I_urgent_context(3'd0),
         .O_byte_valid(S_byte_valid),.I_byte_ready(S_byte_ready),.O_byte_data(S_byte),
@@ -140,3 +140,4 @@ module lean_player_top (
     assign {O_flash_cs_n,O_flash_sclk,O_flash_mosi,O_flash_wp_n,O_flash_hold_n}=5'b10011;
     assign O_led=~{S_error!=0 || S_bridge_fault,S_active,S_card,S_mem_initialized};
 endmodule
+

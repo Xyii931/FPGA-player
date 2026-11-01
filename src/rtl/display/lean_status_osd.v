@@ -8,6 +8,7 @@ module lean_status_osd (
     input wire I_auto,I_mute,I_busy,
     input wire [1:0] I_rotation,
     input wire [2:0] I_volume,
+    input wire [7:0] I_dbg_type,
     output wire [23:0] O_rgb
 );
     reg [7:0] C_char;
@@ -25,7 +26,7 @@ module lean_status_osd (
             6:C_char="/"; 7:C_char=hex_digit({3'd0,I_count[4]}); 8:C_char=hex_digit(I_count[3:0]);
             10:C_char="A"; 11:C_char=hex_digit({3'd0,I_auto});
             13:C_char="R"; 14:C_char=hex_digit({2'd0,I_rotation});
-            16:C_char="V"; 17:C_char=hex_digit({1'b0,I_volume});
+            16:C_char=hex_digit(I_dbg_type[7:4]); 17:C_char=hex_digit(I_dbg_type[3:0]);
             19:C_char="M"; 20:C_char=hex_digit({3'd0,I_mute});
             22:C_char="B"; 23:C_char=hex_digit({3'd0,I_busy});
             25:C_char="E"; 26:C_char=hex_digit(I_error);
@@ -36,3 +37,5 @@ module lean_status_osd (
     assign O_rgb=I_de && I_valid && I_y<16 && I_x<216 ?
         (S_bits[7-I_x[2:0]] ? 24'hffffff : 24'h101820) : I_rgb;
 endmodule
+
+

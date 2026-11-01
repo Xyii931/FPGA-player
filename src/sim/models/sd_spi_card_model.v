@@ -2,7 +2,9 @@
 // Test-only SD card peer for initialization and CMD17. Not a vendor card model.
 // Configurable legacy/SDSC/SDHC, delayed ACMD41, CRC damage and card removal.
 module sd_spi_card_model #(
-    parameter integer OUTPUT_DELAY_NS=0
+    parameter integer OUTPUT_DELAY_NS=0,
+    parameter integer BUSY_BYTES=0,
+    parameter integer IMAGE_FAT32=0
 ) (
     input wire I_ncs,I_sclk,I_mosi,
     output wire O_miso,
@@ -16,6 +18,63 @@ module sd_spi_card_model #(
     integer S_qread=0,S_qwrite=0,S_bits=0,S_packet_count=0,S_attempts=0;
     reg S_idle=1,S_app=0,S_selected=0;
     assign #(OUTPUT_DELAY_NS) O_miso=(!I_present || !S_selected || I_ncs) ? 1'b1 : S_tx[7];
+    // Optional sparse FAT32 image for scan tests. Only the boot sector, both
+    // FAT copies and the root-directory cluster carry content; everything
+    // else reads as 0x00.
+    reg [7:0] S_mbr[0:511];
+    reg [7:0] S_boot[0:511];
+    reg [7:0] S_dir[0:511];
+    integer S_img_i;
+    initial begin
+        for (S_img_i=0;S_img_i<512;S_img_i=S_img_i+1) begin
+            S_boot[S_img_i]=8'h00; S_dir[S_img_i]=8'h00;
+        end
+        S_boot[0]=8'hEB; S_boot[1]=8'h3C; S_boot[2]=8'h90;
+        S_boot[3]=8'h4D; S_boot[4]=8'h53; S_boot[5]=8'h44; S_boot[6]=8'h4F; S_boot[7]=8'h53; S_boot[8]=8'h35;
+        S_boot[11]=8'h00; S_boot[12]=8'h02;
+        S_boot[13]=8'h01;
+        S_boot[14]=8'h20; S_boot[15]=8'h00;
+        S_boot[16]=8'h02;
+        S_boot[21]=8'hF8;
+        S_boot[24]=8'h3F; S_boot[25]=8'h00;
+        S_boot[26]=8'hFF; S_boot[27]=8'h00;
+        S_boot[32]=8'h00; S_boot[33]=8'h00; S_boot[34]=8'h02; S_boot[35]=8'h00;
+        S_boot[36]=8'h00; S_boot[37]=8'h04; S_boot[38]=8'h00; S_boot[39]=8'h00;
+        S_boot[44]=8'h02; S_boot[45]=8'h00; S_boot[46]=8'h00; S_boot[47]=8'h00;
+        S_boot[82]=8'h46; S_boot[83]=8'h41; S_boot[84]=8'h54; S_boot[85]=8'h33; S_boot[86]=8'h32;
+        S_boot[510]=8'h55; S_boot[511]=8'hAA;
+        // MBR: one FAT32-LBA primary partition starting at LBA 2048.
+        for (S_img_i=0;S_img_i<512;S_img_i=S_img_i+1) S_mbr[S_img_i]=8'h00;
+        S_mbr[446]=8'h00; S_mbr[447]=8'h00; S_mbr[448]=8'h00; S_mbr[449]=8'h00;
+        S_mbr[450]=8'h0C; S_mbr[451]=8'hFE; S_mbr[452]=8'hFF; S_mbr[453]=8'hFF;
+        S_mbr[454]=8'h00; S_mbr[455]=8'h08; S_mbr[456]=8'h00; S_mbr[457]=8'h00;
+        S_mbr[458]=8'h00; S_mbr[459]=8'h00; S_mbr[460]=8'h02; S_mbr[461]=8'h00;
+        S_mbr[510]=8'h55; S_mbr[511]=8'hAA;
+        for (S_img_i=0;S_img_i<4;S_img_i=S_img_i+1) begin
+            S_dir[S_img_i*32+0]=8'h49; S_dir[S_img_i*32+1]=8'h4D; S_dir[S_img_i*32+2]=8'h47;
+            S_dir[S_img_i*32+3]=8'h31+S_img_i[7:0];
+            S_dir[S_img_i*32+8]=8'h42; S_dir[S_img_i*32+9]=8'h4D; S_dir[S_img_i*32+10]=8'h50;
+            S_dir[S_img_i*32+11]=8'h20;
+            S_dir[S_img_i*32+26]=8'h02+S_img_i[7:0];
+            S_dir[S_img_i*32+28]=8'h00; S_dir[S_img_i*32+29]=8'h10;
+            S_dir[S_img_i*32+30]=8'h0E; S_dir[S_img_i*32+31]=8'h00;
+        end
+    end
+    function [7:0] img_byte;
+        input [31:0] lba;
+        input [15:0] off;
+        begin
+            if (lba==32'd0) img_byte=S_mbr[off[8:0]];
+            else if (lba==32'd2080 || lba==32'd3104) begin
+                if (off[8:2]==7'd0) img_byte=(off[1:0]==2'd0)?8'hF8:((off[1:0]==2'd3)?8'h0F:8'hFF);
+                else if (off[8:2]<=7'd5) img_byte=(off[1:0]==2'd3)?8'h0F:8'hFF;
+                else img_byte=8'h00;
+            end
+            else if (lba==32'd2048) img_byte=S_boot[off[8:0]];
+            else if (lba==32'd4128) img_byte=S_dir[off[8:0]];
+            else img_byte=8'h00;
+        end
+    endfunction
     task push;
         input [7:0] byte_value;
         begin
@@ -88,8 +147,10 @@ module sd_spi_card_model #(
                         lba=(!I_legacy && I_high_capacity) ? arg : arg>>9;
                         if((I_legacy || !I_high_capacity) && arg[8:0]!=0) O_protocol_error=1;
                         O_last_lba=lba; O_read_count=O_read_count+1;
-                        push(0); push(8'hff); push(8'hfe); crc=0;
-                        for(k=0;k<512;k=k+1) begin value=lba+k; push(value); crc=crc_byte(crc,value); end
+                        push(0); push(8'hff);
+            for(k=0;k<BUSY_BYTES;k=k+1) push(8'hff);
+            push(8'hfe); crc=0;
+                        for(k=0;k<512;k=k+1) begin value=IMAGE_FAT32 ? img_byte(lba,k) : (lba+k); push(value); crc=crc_byte(crc,value); end
                         push(crc[15:8]); push(crc[7:0]^(I_corrupt_crc ? 8'h01 : 8'h00));
                     end
                 end
@@ -119,3 +180,9 @@ module sd_spi_card_model #(
         end else S_tx={S_tx[6:0],1'b1};
     end
 endmodule
+
+
+
+
+
+

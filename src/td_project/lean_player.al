@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Project Version="3" Minor="2" Path="E:/fpga-player/src/td_project">
+<Project Version="3" Minor="2" Path="E:/dsh-project-en-path/fpga-player/FPGA-player/src/td_project">
     <Project_Created_Time></Project_Created_Time>
     <TD_Version>6.2.178840</TD_Version>
     <Name>lean_player</Name>
@@ -433,7 +433,6 @@
                 <PlaceProperty>
                     <effort>high</effort>
                     <pr_strategy>2</pr_strategy>
-                    <seed>1</seed>
                 </PlaceProperty>
             </Strategy>
             <UserParams>
@@ -448,7 +447,7 @@
                 <route_swns>0</route_swns>
             </Filter>
         </Property>
-        <Seeds>1 </Seeds>
+        <Seeds select="1">1 </Seeds>
     </MultiSeed>
     <Project_Settings>
     </Project_Settings>
