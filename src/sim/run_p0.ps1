@@ -19,7 +19,7 @@ New-Item -ItemType Directory -Path $resultDir -Force | Out-Null
 $suites = [ordered]@{
     P0 = @('reset_sync', 'reset_gen', 'pll_tree', 'video_pattern_axis')
     Storage = @('spi_byte_master', 'sd_spi_phy', 'sd_csd_decode', 'sd_sector_reader',
-        'sector_cdc_bridge', 'fat32_mount', 'fat32_chain_walk', 'fat32_file_reader', 'native_sdram_ctrl')
+        'sector_cdc_bridge', 'fat32_mount', 'fat32_chain_walk', 'fat32_file_reader', 'native_sdram_ctrl', 'scan_chain')
     Media = @('bmp_parser', 'wav_parser', 'async_fifo', 'audio_frame_fifo')
     Lean = @('lean_media_source', 'lean_player_ctrl', 'lean_image_loader',
         'lean_video', 'lean_audio', 'lean_player_core')

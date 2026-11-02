@@ -7,3 +7,6 @@
 /reference/**/*_Runs/
 /reference/**/log/
 /reference/**/.recent_user_depot.ini
+/.tmp_sim/
+/td_*.log
+/td_*.logw

@@ -1,7 +1,7 @@
 # Starting constraints for the physical player; timing closure is NOT established.
 create_clock -name clk_50m -period 20 -waveform {0 10} [get_ports {I_clk_50m}]
 derive_clocks
-# Review all five PLL outputs: SD 100 MHz, host/memory 83.333333 MHz,
+# Review all five PLL outputs: unused SD PLL output 100 MHz, host/memory 83.333333 MHz,
 # memory +7 ns / 210 degrees, and video 25/125 MHz.
 # Host/video and host/SD cross through FIFO pointers, held payloads, reset
 # synchronizers and independent status bits. Bound EVERY crossing to the
@@ -16,9 +16,9 @@ set_max_delay -datapath_only 10 \
     -to [get_clocks {u_pll/u_sys/u_pll.clkc[1]}]
 set_max_delay -datapath_only 10 \
     -from [get_clocks {u_pll/u_sys/u_pll.clkc[1]}] \
-    -to [get_clocks {u_pll/u_sys/u_pll.clkc[0]}]
+    -to [get_clocks {clk_50m}]
 set_max_delay -datapath_only 10 \
-    -from [get_clocks {u_pll/u_sys/u_pll.clkc[0]}] \
+    -from [get_clocks {clk_50m}] \
     -to [get_clocks {u_pll/u_sys/u_pll.clkc[1]}]
 # Pre-driven SDRAM WRITE data is launched at least one host cycle before the
 # WRITE command and held through the device edge. Constrain only the DQ pins

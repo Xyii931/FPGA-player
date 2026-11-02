@@ -23,7 +23,7 @@ module tb_lean_player_core;
     reg [31:0] S_memory[0:614399];
     reg [3:0] S_write_pipe=0;
     integer S_cycle=0,S_audio_samples=0,S_commits=0,S_case=0,S_i;
-    reg S_test_pass=0;
+    reg S_test_pass=0,S_status_checked=0;
     wire S_read_ready=!S_result || S_result_ready;
     wire S_write_ready=S_cycle%7!=0;
     wire S_idle=S_write_pipe==0;
@@ -121,6 +121,19 @@ module tb_lean_player_core;
         end
     endtask
     initial begin
+        wait(!S_reset);
+        // Exercise the diagnostic byte through the host-to-video status FIFO.
+        // A value with high bits set detects an accidentally implicit 1-bit net.
+        force u_player.S_mount_type=8'h8c;
+        wait(u_player.S_pending_status[28:21]===8'h8c);
+        @(negedge S_video); force u_player.S_frame_start=1'b1;
+        @(negedge S_video); release u_player.S_frame_start;
+        if(u_player.S_video_status[28:21]!==8'h8c || u_player.u_status_osd.I_dbg_type!==8'h8c)
+            fail("partition type did not reach video status intact");
+        release u_player.S_mount_type;
+        S_status_checked=1;
+    end
+    initial begin
         repeat(12) @(negedge S_host); S_reset=0;
         send_byte("A"); send_byte("0"); send_byte(13);
         S_case=1; wait_image(0,1); check_pixel(321,201,0);
@@ -135,6 +148,7 @@ module tb_lean_player_core;
         repeat(5000) @(negedge S_host); check_pixel(321,201,1);
         S_bad_images=0; @(negedge S_host); S_card=1;
         wait_image(0,6); check_pixel(321,201,0);
+        if(!S_status_checked) fail("diagnostic status test did not finish");
         S_test_pass=1; $display("PASS: lean player four files, UART/keys, concurrent WAV, bad-file skip and card recovery"); $finish;
     end
     initial begin #1000000000; fail("watchdog"); end

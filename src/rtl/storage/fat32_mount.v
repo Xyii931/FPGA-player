@@ -142,13 +142,16 @@ module fat32_mount (
                     else S_wait_count<=S_wait_count+1'b1;
                 end
                 FETCH_WAIT: begin
+                    // Once the sector port accepted the request it owns the
+                    // transaction until its terminal result. Abandoning it on
+                    // a local timeout leaves that result unconsumed and blocks
+                    // the shared port. The SD reader has its own timeouts.
                     if(I_read_result_valid) begin
                         O_storage_error<=I_storage_error;
                         if(!I_card_ready || I_read_error==1) finish(8'd1);
                         else if(I_read_error!=0) finish(8'd2);
                         else begin clear_fields; S_scan<=0; S_wait_count<=24'd0; S_state<=SCAN_ADDRESS; end
-                    end else if(&S_wait_count) finish(8'd9);
-                    else S_wait_count<=S_wait_count+1'b1;
+                    end
                 end
                 SCAN_ADDRESS: S_state<=SCAN_BYTE;
                 SCAN_BYTE: begin

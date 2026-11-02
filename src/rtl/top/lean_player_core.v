@@ -69,7 +69,7 @@ module lean_player_core #(
     reset_sync u_hrst(.I_clk(I_host_clk),.I_async_reset(I_async_reset),.O_reset(S_hrst));
     reset_sync u_vrst(.I_clk(I_video_clk),.I_async_reset(I_async_reset),.O_reset(S_vrst));
     wire S_catalog,S_audio_found;
-    wire [7:0] S_catalog_error;
+    wire [7:0] S_catalog_error,S_mount_type;
     wire S_next,S_prev,S_reload,S_auto,S_mute;
     wire [1:0] S_rotation;
     wire [2:0] S_volume;
@@ -152,19 +152,19 @@ module lean_player_core #(
         .O_rotation(S_rotation),.O_volume(S_volume),.O_interval(S_interval),
         .O_dropped()
     );
-    wire [20:0] S_status={O_current,O_count,S_auto,S_active_rotation,S_volume,S_mute,O_busy,O_error};
-    reg [20:0] S_sent,S_video_status,S_pending_status;
+    wire [28:0] S_status={S_mount_type,O_current,O_count,S_auto,S_active_rotation,S_volume,S_mute,O_busy,O_error};
+    reg [28:0] S_sent,S_video_status,S_pending_status;
     wire S_status_ready,S_status_valid;
-    wire [20:0] S_status_data;
+    wire [28:0] S_status_data;
     wire S_status_write=S_status!=S_sent;
-    async_fifo #(.DATA_BITS(21),.ADDR_BITS(2)) u_status (
+    async_fifo #(.DATA_BITS(29),.ADDR_BITS(2)) u_status (
         .I_write_clk(I_host_clk),.I_read_clk(I_video_clk),.I_async_reset(I_async_reset),
         .I_write_valid(S_status_write),.O_write_ready(S_status_ready),.I_write_data(S_status),
         .O_read_valid(S_status_valid),.I_read_ready(1'b1),.O_read_data(S_status_data),
         .O_write_full(), .O_write_level(), .O_read_empty(), .O_read_level()
     );
     always @(posedge I_host_clk or posedge S_hrst) begin
-        if(S_hrst) S_sent<=21'h1fffff;
+        if(S_hrst) S_sent<=29'h1fffffff;
         else if(S_status_write && S_status_ready) S_sent<=S_status;
     end
     always @(posedge I_video_clk or posedge S_vrst) begin
@@ -177,7 +177,7 @@ module lean_player_core #(
     lean_status_osd u_status_osd (
         .I_de(O_de),.I_valid(O_valid),.I_x(O_x),.I_y(O_y),.I_rgb(S_rgb),
         .I_current(S_video_status[20:17]),.I_count(S_video_status[16:12]),.I_auto(S_video_status[11]),
-        .I_dbg_type(S_mount_type),.I_rotation(S_video_status[10:9]),.I_volume(S_video_status[8:6]),.I_mute(S_video_status[5]),
+        .I_dbg_type(S_video_status[28:21]),.I_rotation(S_video_status[10:9]),.I_volume(S_video_status[8:6]),.I_mute(S_video_status[5]),
         .I_busy(S_video_status[4]),.I_error(S_video_status[3:0]),.O_rgb(O_rgb)
     );
     lean_audio u_audio (

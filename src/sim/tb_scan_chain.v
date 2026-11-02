@@ -1,7 +1,8 @@
 `timescale 1ns/1ps
 // Full media-source mount chain: lean_media_source -> fat32_sector_port
-// -> sd_storage (83.33/100 MHz) -> sd_spi_card_model.
-module tb_media_chain;
+// -> sd_storage (83.33/50 MHz) -> sd_spi_card_model.
+module tb_scan_chain;
+    reg S_test_pass=0;
     reg host_clk=0, sd_clk=0, reset=1;
     wire card_ready;
     wire [32:0] capacity;
@@ -9,8 +10,6 @@ module tb_media_chain;
     wire [4:0] image_count;
     wire audio_found, catalog_overflow;
     wire [7:0] catalog_error;
-    wire [3:0] phase;
-    wire [1:0] port_state, port_flags;
 
     wire req_valid, req_ready, byte_valid, done_valid;
     wire [7:0] byte_data;
@@ -23,17 +22,16 @@ module tb_media_chain;
 
     wire sd_ncs, sd_sclk, sd_mosi, sd_miso;
     wire card_clk, card_ncs, card_mosi, card_miso, card_error;
-    wire [3:0] sd_dbg;
 
     always #6 host_clk = ~host_clk;
-    always #5 sd_clk   = ~sd_clk;
+    always #10 sd_clk  = ~sd_clk;
 
     assign #7 card_clk  = sd_sclk;
     assign #7 card_ncs  = sd_ncs;
     assign #7 card_mosi = sd_mosi;
     assign #2 sd_miso   = card_miso;
 
-    sd_spi_card_model #(.OUTPUT_DELAY_NS(14)) u_card (
+    sd_spi_card_model #(.OUTPUT_DELAY_NS(14), .BUSY_BYTES(50), .IMAGE_FAT32(1)) u_card (
         .I_ncs(card_ncs), .I_sclk(card_clk), .I_mosi(card_mosi), .O_miso(card_miso),
         .I_present(1'b1), .I_legacy(1'b0), .I_high_capacity(1'b1),
         .I_allow_init(1'b1), .I_corrupt_crc(1'b0),
@@ -41,7 +39,7 @@ module tb_media_chain;
         .O_acmd41_count(), .O_protocol_error(card_error)
     );
 
-    sd_storage #(.WORK_DIVIDER(16'd250)) u_storage (
+    sd_storage #(.WORK_DIVIDER(16'd8), .POWERUP_CYCLES(32'd1000)) u_storage (
         .I_host_clk(host_clk), .I_sd_clk(sd_clk), .I_async_reset(reset),
         .I_request_valid(req_valid), .O_request_ready(req_ready),
         .I_lba(req_lba), .I_count(req_count), .I_context(req_ctx), .I_priority(req_pri),
@@ -55,7 +53,7 @@ module tb_media_chain;
         .O_cancel_done_valid(), .I_cancel_done_ready(1'b0),
         .O_cancel_done_context(), .O_cancel_done_tag(),
         .O_card_ready(card_ready), .O_card_present(), .O_capacity_sectors(capacity),
-        .O_sd_high_capacity(), .O_sd_card_error(), .O_sd_dbg_state(sd_dbg),
+        .O_sd_high_capacity(), .O_sd_card_error(),
         .O_sd_ncs(sd_ncs), .O_sd_sclk(sd_sclk), .O_sd_mosi(sd_mosi), .I_sd_miso(sd_miso)
     );
 
@@ -64,8 +62,7 @@ module tb_media_chain;
         .I_capacity_sectors(capacity),
         .O_catalog_ready(catalog_ready), .O_image_count(image_count),
         .O_audio_found(audio_found), .O_catalog_overflow(catalog_overflow),
-        .O_catalog_error(catalog_error), .O_phase(phase),
-        .O_port_state(port_state), .O_port_flags(port_flags),
+        .O_catalog_error(catalog_error), .O_dbg_type(),
         .I_command_valid(1'b0), .O_command_ready(), .I_command_audio(1'b0),
         .I_image_index(4'd0), .I_offset(32'd0), .I_length(32'd0),
         .O_begin_valid(), .I_begin_ready(1'b1), .O_begin_audio(), .O_file_size(), .O_begin_error(),
@@ -84,20 +81,20 @@ module tb_media_chain;
     );
 
     initial begin
-        forever begin
-            #200000;
-            $display("t=%0t phase=%0d catalog_err=%0h cat_ready=%b count=%0d port_st=%0d flags=%b rd_state=%0d card_ready=%b",
-                     $time, phase, catalog_error, catalog_ready, image_count,
-                     port_state, port_flags, sd_dbg, card_ready);
-            if ($time > 20000000) $finish;
-        end
-    end
-
-    initial begin
         repeat (20) @(posedge host_clk);
         reset <= 0;
-        #20000000;
-        $display("final phase=%0d catalog_err=%0h cat_ready=%b count=%0d", phase, catalog_error, catalog_ready, image_count);
+        wait(catalog_ready || catalog_error != 0);
+        if (catalog_ready !== 1'b1 || catalog_error !== 8'd0 || image_count !== 5'd4 || card_error !== 1'b0) begin
+            $display("FAIL: catalog ready=%b error=%h count=%0d protocol_error=%b", catalog_ready, catalog_error, image_count, card_error);
+            $stop;
+        end
+        S_test_pass=1;
+        $display("PASS: SD SPI through FAT32 mount and root scan found four images");
         $finish;
+    end
+    initial begin
+        #300000000;
+        $display("FAIL: full scan timed out");
+        $stop;
     end
 endmodule

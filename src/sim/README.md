@@ -1,6 +1,6 @@
 # FPGA-player 功能自检
 
-本目录提供播放器和基础诊断使用的23项ModelSim自检。默认套件为 `Lean`，从仓库根目录运行：
+本目录提供播放器和基础诊断使用的24项ModelSim自检。默认套件为 `Lean`，从仓库根目录运行：
 
 ```powershell
 & ./src/sim/run_p0.ps1 -Suite P0
@@ -19,10 +19,12 @@
 | 套件 | 项数 | 范围 |
 |---|---:|---|
 | `P0` | 4 | reset_sync、reset_gen、PLL树、基础HDMI视频源 |
-| `Storage` | 9 | SPI字节、SD PHY/CSD/扇区、扇区CDC、FAT挂载/簇链/文件、原生SDRAM |
+| `Storage` | 10 | SPI字节、SD PHY/CSD/扇区、扇区CDC、FAT挂载/簇链/文件、原生SDRAM，以及SD到目录扫描的集成测试 |
 | `Media` | 4 | BMP、WAV、双时钟FIFO、音频帧FIFO |
 | `Lean` | 6 | 文件源、控制、错误装载、完整四旋转视频、音频、播放整合 |
-| `All` | 23 | 上述全部用例 |
+| `All` | 24 | 上述全部用例 |
+
+`scan_chain` 使用 SD SPI 卡模型和稀疏 FAT32 镜像，检查 50 MHz SD 时钟、6.25 MHz SPI 工作速率下从读卡到发现四张图片的链路；它不能代替真实卡、布线和物理时序验证。
 
 `lean_video`对四次完整640×480 BMP进行4×307200逐像素黄金比较，并使用真实native SDRAM控制器与独立器件模型。`lean_image_loader`专查坏尺寸/签名、取消、终态/写入退休及重用。`lean_audio`检查分块WAV读取、循环、左右声道、音量/静音和ACR。`lean_player_core`检查四文件切换、并发音频、坏图跳过和拔卡重插。
 

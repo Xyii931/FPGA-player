@@ -171,6 +171,14 @@ module tb_fat32_mount;
         raw_disk; S_bad_markers=1; launch; expect_result(2,1);
         raw_disk; S_bad_identity=1; launch; expect_result(2,1);
         raw_disk; S_limit=511; launch; expect_result(2,1);
+        // A slow accepted request must retain ownership until its response;
+        // otherwise the shared sector port is left with an unconsumed result.
+        raw_disk; launch;
+        wait(S_byte_valid && S_model_index==16); @(negedge S_clk);
+        u_dut.u_mount.S_wait_count=24'hfffffe;
+        repeat(4) @(negedge S_clk);
+        if(S_result_valid) fail("accepted sector abandoned before completion");
+        expect_result(0,1);
         raw_disk; launch;
         wait(S_byte_valid && S_model_index==16); @(negedge S_clk); S_card_ready=0;
         // Do not reset or flush: the peer still returns all old bytes and done.

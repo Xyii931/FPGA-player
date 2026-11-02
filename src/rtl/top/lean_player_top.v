@@ -61,7 +61,8 @@ module lean_player_top (
     wire [1:0] S_context,S_priority,S_byte_context,S_done_context,S_cancel_context,S_cancel_done_context;
     wire [15:0] S_tag,S_byte_tag,S_done_tag,S_cancel_tag,S_cancel_done_tag;
     wire [3:0] S_sd_error;
-    sd_storage #(.WORK_DIVIDER(16'd64)) u_storage (
+    // 50 MHz / 8 = 6.25 MHz during reads; initialization remains 200 kHz.
+    sd_storage #(.WORK_DIVIDER(16'd8)) u_storage (
         .I_host_clk(S_clk125),.I_sd_clk(I_clk_50m),.I_async_reset(S_host_reset),
         .I_request_valid(S_request),.O_request_ready(S_request_ready),.I_lba(S_lba),.I_count(S_count),
         .I_context(S_context),.I_priority(S_priority),.I_tag(S_tag),.I_urgent_context(3'd0),

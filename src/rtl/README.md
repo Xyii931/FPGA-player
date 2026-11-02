@@ -22,4 +22,4 @@
 - 旧帧读事件全部退休并收到提交ACK后，才允许重写旧slot。
 - `bmp_parser`输出RRGGBBAA，帧存储为ffRRGGBB；音频配置在视频域一致采纳。
 
-详细端口和错误约定见[系统设计](../../docs/design/README.md)。当前未完成时序收敛及硬件验收，不能仅凭RTL或功能模型判断真实PLL、RAM和HDMI行为。
+详细端口和错误约定见[系统设计](../../docs/design/README.md)。当前尚未完成硬件验收，不能仅凭RTL或功能模型判断真实PLL、RAM和HDMI行为。
