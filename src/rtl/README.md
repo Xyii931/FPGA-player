@@ -12,7 +12,7 @@
 6. `media/lean_audio_cache.v`、`lean_audio.v`：完整WAV缓存、循环解码、样本FIFO、音量和48 kHz输出。
 7. `top/lean_player_ctrl.v`、`display/lean_status_osd.v`：按键、短UART命令和ASCII状态。
 
-`storage/fat32_files.v` 与 `fat32_volume.v` 是独立文件/挂载自检使用的薄包装，不属于主工程实例层次。`top/p0_hdmi_top.v` 和 `display/video_pattern_axis.v` 用于基础HDMI诊断。
+`storage/fat32_files.v`与`fat32_volume.v`是独立文件/挂载自检使用的薄包装，不属于主工程实例层次。
 
 连接时必须保持：
 

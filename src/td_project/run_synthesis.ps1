@@ -1,28 +1,23 @@
 ﻿[CmdletBinding()]
 param(
-    [ValidateSet('p0_hdmi', 'lean_player')]
+    [ValidateSet('lean_player')]
     [string]$Project = 'lean_player',
-    [ValidateSet('lean_media_source', 'audio_frame_fifo')]
-    [string]$Module,
     [switch]$PlaceAndRoute,
     [string]$TdPath = 'D:/Anlogic/TD_6.2.1_Engineer_6.2.168.116/bin/td_commands_prompt.exe'
 )
 $ErrorActionPreference = 'Stop'
-if ($Module -and $Project -ne 'lean_player') { throw '-Module requires -Project lean_player.' }
-if ($Module -and $PlaceAndRoute) { throw '-PlaceAndRoute requires a board top, not -Module.' }
 if (-not (Test-Path -LiteralPath $TdPath -PathType Leaf)) {
     throw "TD command-line executable not found: $TdPath. Set -TdPath."
 }
 $repoDir = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $runId = (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
-$runName = if ($Module) { $Module } else { $Project }
-$relativeDir = if ($Module) { ".local/td-build/$Project/$Module/$runId" } else { ".local/td-build/$Project/$runId" }
+$runName = $Project
+$relativeDir = ".local/td-build/$Project/$runId"
 $resultDir = Join-Path $repoDir $relativeDir
 New-Item -ItemType Directory -Path $resultDir -Force | Out-Null
 $substDrive = $null
 $simRepoDir = $repoDir
 $previousProject = $env:FPGA_PLAYER_PROJECT
-$previousModule = $env:FPGA_PLAYER_MODULE
 $previousPlaceRoute = $env:FPGA_PLAYER_PLACE_ROUTE
 $exitCode = -1
 $errorText = $null
@@ -47,7 +42,6 @@ try {
         $simRepoDir = $substDrive + '\'
     }
     $env:FPGA_PLAYER_PROJECT = $Project
-    $env:FPGA_PLAYER_MODULE = $Module
     $env:FPGA_PLAYER_PLACE_ROUTE = if ($PlaceAndRoute) { '1' } else { '0' }
     $scriptPath = (Join-Path $simRepoDir 'src/td_project/synthesize.tcl').Replace('\', '/')
     Write-Host "Synthesizing $runName ..."
@@ -60,7 +54,6 @@ try {
     $errorText = $_.Exception.Message
 } finally {
     $env:FPGA_PLAYER_PROJECT = $previousProject
-    $env:FPGA_PLAYER_MODULE = $previousModule
     $env:FPGA_PLAYER_PLACE_ROUTE = $previousPlaceRoute
     if ($substDrive) { & subst.exe $substDrive /D }
 }
@@ -88,12 +81,9 @@ if (Test-Path -LiteralPath $areaReport) {
         }
     }
 }
-# Module IO counts include internal buses, not package pins. Physical pads
-# remain subject to the device limit for both board and module analyses.
-$capacityResources = @($resources | Where-Object { -not $Module -or $_.Name -ne 'IO' })
 $resourceFits = @($resources | Where-Object { $_.Name -eq 'lut' }).Count -eq 1 -and
     @($resources | Where-Object { $_.Name -eq 'reg' }).Count -eq 1 -and
-    @($capacityResources | Where-Object { $_.Used -gt $_.Available }).Count -eq 0
+    @($resources | Where-Object { $_.Used -gt $_.Available }).Count -eq 0
 if (Test-Path -LiteralPath $consoleLog) {
     $criticalWarnings = @(Select-String -LiteralPath $consoleLog -Pattern ' CRITICAL-WARNING:').Count
     $errors = @(Select-String -LiteralPath $consoleLog -Pattern ' ERROR:').Count
@@ -123,7 +113,6 @@ if (Test-Path -LiteralPath $timingStatus) {
 if ($PlaceAndRoute) { $passed = $passed -and $timingMet -eq $true }
 $result = [pscustomobject]@{
     Project = $Project
-    Module = $Module
     Stage = $completedStage
     RequestedStage = if ($PlaceAndRoute) { 'Routed' } else { 'Synthesis' }
     Passed = [bool]$passed

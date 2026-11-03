@@ -1,6 +1,7 @@
 *.mp4
 /.local/
 /AGENTS.md
+/material/
 /src/sim/build/
 /src/sim/.runner_*.do
 /transcript

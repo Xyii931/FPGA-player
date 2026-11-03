@@ -22,7 +22,7 @@ SDRAM音频缓存配置的实测顺序为先显示首图、再开始音乐。音
 
 缓存与完整帧集成使用Verilator 5.020、实际native SDRAM控制器RTL和独立器件模型；集成的SD侧为功能扇区端点。缓存单元短测试和TD RAM音频测试使用ModelSim-Altera 10.3c。WAV采样测试使用可逐样本核对的2844字节数据，完整缓存容量由独立4 MiB测试覆盖。
 
-测试集共25项，分为P0、Storage、Media和Lean四个套件。正式音频缓存集成场景由`FPGA_PLAYER_CACHED_MEDIA=1`选择；模型范围及工具参数见[仿真说明](../src/sim/README.md)。厂商加密HDMI核、PLL相位和接口电气由TD与实板检查。
+当前测试集共24项，分为Common、Storage、Media和Lean四个套件。正式音频缓存集成场景由`FPGA_PLAYER_CACHED_MEDIA=1`选择；模型范围及工具参数见[仿真说明](../src/sim/README.md)。厂商加密HDMI核、PLL相位和接口电气由TD与实板检查。
 
 ## TD实现
 

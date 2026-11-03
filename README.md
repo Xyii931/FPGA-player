@@ -52,7 +52,7 @@ flowchart LR
 开发工具为Anlogic TD和ModelSim。验证环境为TD V6.2.168116、ModelSim-Altera 10.3c；脚本允许通过参数指定安装路径。从仓库根目录运行：
 
 ```powershell
-& ./src/sim/run_p0.ps1 -Suite All
+& ./src/sim/run_tests.ps1 -Suite All
 & ./src/td_project/run_synthesis.ps1 -Project lean_player
 ```
 
@@ -66,6 +66,6 @@ flowchart LR
 | [src/](src/README.md) | 正式RTL、器件IP包装、约束、TD工程和自检脚本 |
 | [src/rtl/](src/rtl/README.md) | 模块导航与连接规则 |
 | [media/](media/README.md) | 当前演示使用的BMP图片、短WAV背景音乐及素材来源 |
-| [reference/](reference/README.md) | 提供的实验例程、厂商IP、原始说明及素材 |
+| [reference/](reference/README.md) | 正式工程使用的厂商HDMI依赖及IP手册 |
 
 正式工程直接使用厂商HDMI加密核及其PHY/串行器包装，PLL和SDRAM包装保留参数来源注释。参考资料的来源和依赖路径见[参考资料说明](reference/README.md)。构建产物和个人开发笔记不纳入源码提交。

@@ -2,7 +2,7 @@
 [CmdletBinding()]
 param(
     [string]$VsimPath = 'D:/altera/14.1/modelsim_ase/win32aloem/vsim.exe',
-    [ValidateSet('P0', 'Media', 'Storage', 'Lean', 'All')]
+    [ValidateSet('Common', 'Media', 'Storage', 'Lean', 'All')]
     [string]$Suite = 'Lean',
     [string[]]$Case = @(),
     [switch]$NoVopt
@@ -17,7 +17,7 @@ $runId = (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString
 $resultDir = Join-Path $simDir "build/$($Suite.ToLowerInvariant())/$runId"
 New-Item -ItemType Directory -Path $resultDir -Force | Out-Null
 $suites = [ordered]@{
-    P0 = @('reset_sync', 'reset_gen', 'pll_tree', 'video_pattern_axis')
+    Common = @('reset_sync', 'reset_gen', 'pll_tree')
     Storage = @('spi_byte_master', 'sd_spi_phy', 'sd_csd_decode', 'sd_sector_reader',
         'sector_cdc_bridge', 'fat32_mount', 'fat32_chain_walk', 'fat32_file_reader', 'native_sdram_ctrl', 'scan_chain')
     Media = @('bmp_parser', 'wav_parser', 'async_fifo', 'audio_frame_fifo')

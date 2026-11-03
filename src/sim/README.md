@@ -1,14 +1,14 @@
 # FPGA-player 功能自检
 
-本目录提供25项ModelSim自检。从仓库根目录运行：
+本目录提供24项ModelSim自检。从仓库根目录运行：
 
 ```powershell
-& ./src/sim/run_p0.ps1 -Suite All
+& ./src/sim/run_tests.ps1 -Suite All
 ```
 
 | 套件 | 项数 | 范围 |
 |---|---:|---|
-| `P0` | 4 | 复位、PLL功能模型、基础HDMI视频源 |
+| `Common` | 3 | 复位同步、复位管理与PLL功能模型 |
 | `Storage` | 10 | SPI字节、SD PHY/CSD/扇区、扇区CDC、FAT挂载/簇链/文件、原生SDRAM及读卡到目录扫描集成 |
 | `Media` | 4 | BMP、WAV、双时钟FIFO、音频帧FIFO |
 | `Lean` | 7 | 文件源、控制、图像装载、四方向视频、音频、SDRAM音频缓存、播放器集成 |
@@ -16,9 +16,9 @@
 默认套件为`Lean`。使用`-Case`选择所属套件中的单项：
 
 ```powershell
-& ./src/sim/run_p0.ps1 -Suite Storage -Case scan_chain
-& ./src/sim/run_p0.ps1 -Suite Lean -Case lean_audio_cache
-& ./src/sim/run_p0.ps1 -Suite Lean -Case lean_video,lean_player_core
+& ./src/sim/run_tests.ps1 -Suite Storage -Case scan_chain
+& ./src/sim/run_tests.ps1 -Suite Lean -Case lean_audio_cache
+& ./src/sim/run_tests.ps1 -Suite Lean -Case lean_video,lean_player_core
 ```
 
 ## 音频缓存
@@ -26,7 +26,7 @@
 正式工程默认`AUDIO_CACHE=1`。`lean_audio_cache`单元测试连接实际native SDRAM控制器和独立器件模型，检查首图许可、字节打包、尾字补零、写入退休、读取范围、取消、文件错误、Begin失败、旧读返回排空与媒体恢复。
 
 ```powershell
-& ./src/sim/run_p0.ps1 -Suite Lean -Case lean_audio_cache
+& ./src/sim/run_tests.ps1 -Suite Lean -Case lean_audio_cache
 ```
 
 额外设置`FPGA_PLAYER_CACHE_FULL=1`，同一测试会填满4194304字节，检查最后合法字地址及尾部读取。运行后移除该环境变量。
@@ -36,7 +36,7 @@
 ```powershell
 $env:FPGA_PLAYER_AUDIO_CACHE = '1'
 try {
-    & ./src/sim/run_p0.ps1 -Suite Lean -Case lean_audio
+    & ./src/sim/run_tests.ps1 -Suite Lean -Case lean_audio
 } finally {
     Remove-Item Env:FPGA_PLAYER_AUDIO_CACHE
 }
@@ -49,7 +49,7 @@ try {
 ```powershell
 $env:FPGA_PLAYER_CACHED_MEDIA = '1'
 try {
-    & ./src/sim/run_p0.ps1 -Suite Lean -Case lean_player_core
+    & ./src/sim/run_tests.ps1 -Suite Lean -Case lean_player_core
 } finally {
     Remove-Item Env:FPGA_PLAYER_CACHED_MEDIA
 }
@@ -83,7 +83,7 @@ try {
 ```powershell
 $env:FPGA_PLAYER_BOARD_MEDIA = '1'
 try {
-    & ./src/sim/run_p0.ps1 -Suite Lean -Case lean_player_core
+    & ./src/sim/run_tests.ps1 -Suite Lean -Case lean_player_core
 } finally {
     Remove-Item Env:FPGA_PLAYER_BOARD_MEDIA
 }
@@ -98,7 +98,7 @@ RAM相关测试默认使用功能模型。选择TD安装目录的RAM模型：
 ```powershell
 $env:FPGA_PLAYER_NATIVE_BRAM = '1'
 try {
-    & ./src/sim/run_p0.ps1 -Suite Media -Case async_fifo,audio_frame_fifo
+    & ./src/sim/run_tests.ps1 -Suite Media -Case async_fifo,audio_frame_fifo
 } finally {
     Remove-Item Env:FPGA_PLAYER_NATIVE_BRAM
 }
@@ -113,7 +113,7 @@ $env:FPGA_PLAYER_AUDIO_CACHE = '1'
 $env:FPGA_PLAYER_NATIVE_BRAM = '1'
 $env:FPGA_PLAYER_AUDIO_WRAP = '1'
 try {
-    & ./src/sim/run_p0.ps1 -Suite Lean -Case lean_audio
+    & ./src/sim/run_tests.ps1 -Suite Lean -Case lean_audio
 } finally {
     Remove-Item Env:FPGA_PLAYER_AUDIO_CACHE, Env:FPGA_PLAYER_NATIVE_BRAM, Env:FPGA_PLAYER_AUDIO_WRAP
 }
@@ -124,7 +124,7 @@ try {
 通过`-VsimPath`指定ModelSim的`vsim.exe`。脚本将中文仓库路径映射到临时空闲盘符。ModelSim 10.1c的自动优化存在兼容问题时，使用`-NoVopt`：
 
 ```powershell
-& ./src/sim/run_p0.ps1 -Suite All -NoVopt -VsimPath '<ModelSim安装目录>/vsim.exe'
+& ./src/sim/run_tests.ps1 -Suite All -NoVopt -VsimPath '<ModelSim安装目录>/vsim.exe'
 ```
 
 每项独立运行；全部成功退出0，否则退出1。结果归档在`build/<suite>/<批次>/summary.json`，包含退出码、耗时及日志路径；原始工作库位于`build/<case>/`。通过条件为本次transcript已刷新、包含PASS、退出码为0且无脚本错误。

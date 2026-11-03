@@ -3,9 +3,8 @@
 | 工程 | 顶层 | 用途 | 约束 |
 |---|---|---|---|
 | [lean_player.al](lean_player.al) | `lean_player_top` | 图片与音频播放器 | `../constraints/player.adc`、`player.sdc` |
-| [p0_hdmi.al](p0_hdmi.al) | `p0_hdmi_top` | 基础HDMI视频诊断 | `../constraints/p0_hdmi.adc`、`p0_hdmi.sdc` |
 
-目标器件为 `EG4S20BG256`，验证环境为Anlogic TD V6.2.168116。主工程引用47份Verilog文件，诊断工程引用19份，每个工程另引用两份约束。相对路径以本目录为基准，须保持仓库结构。测试台和仿真替身不加入综合工程。
+目标器件为`EG4S20BG256`，验证环境为Anlogic TD V6.2.168116。工程引用47份Verilog文件和两份约束。相对路径以本目录为基准，须保持仓库结构。测试台和仿真替身不加入综合工程。
 
 ## GUI操作
 
@@ -22,7 +21,6 @@
 
 ```powershell
 & ./src/td_project/run_synthesis.ps1 -Project lean_player
-& ./src/td_project/run_synthesis.ps1 -Project p0_hdmi
 ```
 
 继续执行布局布线和独立hold修复：
@@ -31,20 +29,13 @@
 & ./src/td_project/run_synthesis.ps1 -Project lean_player -PlaceAndRoute
 ```
 
-`-PlaceAndRoute` 从源码重新综合并执行至最终布线检查，不能与 `-Module` 同用。脚本不生成bit、不下载至FPGA，也不烧写Flash。
+`-PlaceAndRoute`从源码重新综合并执行至最终布线检查。脚本不生成bit、不下载至FPGA，也不烧写Flash。
 
 通过 `-TdPath` 指定安装环境中的TD命令行程序；下面的安装目录须替换为实际路径：
 
 ```powershell
 & ./src/td_project/run_synthesis.ps1 -Project lean_player -PlaceAndRoute `
     -TdPath '<TD安装目录>/bin/td_commands_prompt.exe'
-```
-
-可按模块检查实际工程依赖：
-
-```powershell
-& ./src/td_project/run_synthesis.ps1 -Project lean_player -Module lean_media_source
-& ./src/td_project/run_synthesis.ps1 -Project lean_player -Module audio_frame_fifo
 ```
 
 中文路径由脚本通过临时空闲盘符映射处理；脚本只释放自己建立的映射。
@@ -57,7 +48,7 @@
 
 脚本在 `open_project -single_run` 上下文设置实际参数，并保存 `*_place.params`、`*_route.params`。GUI流程由工程的 `MultiSeed` 配置指定seed，子任务应出现 `set_param place seed 2`；子任务的 `flow enable_seed` 显示off时，应结合上层配置和实际place命令确认。
 
-结果保存在 `.local/td-build/<项目>/<批次>/`，模块检查另有模块名子目录。`summary.json` 记录实际阶段、错误、严重告警、资源和时序：
+结果保存在`.local/td-build/lean_player/<批次>/`。`summary.json`记录实际阶段、错误、严重告警、资源和时序：
 
 - `Stage=Synthesis`：`Passed` 检查流程、容量和严重诊断，时序另看 `TimingMet`。
 - `Stage=Routed`：`Passed` 还要求最终setup/hold非负；缺少时序报告或仍有严重告警时返回失败。
@@ -66,6 +57,8 @@
 当前实现结果及SDRAM位置告警见[验证记录](../../docs/verification.md)。
 
 ## 时钟与原语
+
+下表为主播放器工程的时钟配置。
 
 | 时钟域 | 频率 / 相位 |
 |---|---|
@@ -88,5 +81,3 @@
 当前SDC包含50 MHz主时钟、`derive_clocks`、主机/视频及主机/SD跨域双向10 ns纯数据路径上限，以及与提前驱动协议对应的SDRAM DQ多周期例外。Gray指针包含在路径上限内；命令、地址、掩码及其他存储路径继续接受时序分析。须核对例外覆盖、IO延迟和未约束路径。
 
 下载前核对板卡版本、目标器件、ADC引脚、最终时序和严重告警。素材、接线、按键与主工程LED含义见[使用说明](../../docs/使用说明.md)，逐项检查见[验证与上板](../../docs/验证与上板.md)。
-
-基础诊断工程的LED1/2表示系统/视频PLL lock，LED3表示HDMI核lock，LED4为约1.49 Hz心跳；KEY1可重新触发。该入口无HPD自动恢复，应先连接显示器；其验证范围为基础视频链路。
