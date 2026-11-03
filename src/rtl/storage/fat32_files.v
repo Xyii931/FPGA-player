@@ -112,6 +112,7 @@ module fat32_files (
         .I_length(I_length),
         .I_epoch(I_epoch),
         .I_urgent_context(I_urgent_context),
+        .I_pause_context(3'b000),
         .O_byte_valid(O_byte_valid),
         .I_byte_ready(I_byte_ready),
         .O_byte_data(O_byte_data),

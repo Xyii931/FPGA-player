@@ -23,6 +23,7 @@ module fat32_file_reader #(
     input wire [31:0] I_offset,I_length,
     input wire [15:0] I_epoch,
     input wire [2:0] I_urgent_context,
+    input wire [CONTEXTS-1:0] I_pause_context,
     output wire O_byte_valid,
     input wire I_byte_ready,
     output reg [7:0] O_byte_data,
@@ -169,7 +170,11 @@ module fat32_file_reader #(
             S_candidate=S_rr+S_i;
             if(S_candidate>=CONTEXTS) S_candidate=S_candidate-CONTEXTS;
             S_score={I_urgent_context[S_candidate],S_priority[S_candidate]};
-            if(S_pending[S_candidate] && (!S_pick_found || S_score>S_best)) begin
+            // Paused consumers must not occupy the shared checked-sector RAM.
+            // Cancellation and media-loss retirement must still make progress.
+            if(S_pending[S_candidate] &&
+                (!I_pause_context[S_candidate] || S_canceled[S_candidate] || S_lost[S_candidate] || !I_mounted) &&
+                (!S_pick_found || S_score>S_best)) begin
                 S_pick_found=1; S_pick=S_candidate; S_best=S_score;
             end
             if(S_terminal[S_i] && !S_terminal_found) begin S_terminal_found=1; S_terminal_pick=S_i; end
@@ -339,7 +344,10 @@ module fat32_file_reader #(
                             S_tortoise[S_active]<=S_walk_cluster; S_power[S_active]<=S_power[S_active]<<1; S_lam[S_active]<=0;
                         end else S_lam[S_active]<=S_lam[S_active]+32'd1;
                     end else begin S_tortoise[S_active]<=S_walk_cluster; S_power[S_active]<=1; S_lam[S_active]<=0; end
-                    S_state<=PREPARE;
+                    // Metadata has released the checked-sector port. Let a
+                    // newly pending audio request run before image data, and
+                    // re-check pause/headroom before admitting that data read.
+                    S_state<=SCHEDULE;
                 end
                 DATA_SEND: if(S_lost_active) complete(8'd1);
                     else if(S_stop) complete(8'd8);
@@ -352,7 +360,11 @@ module fat32_file_reader #(
                     else S_state<=DATA_ADDRESS;
                 end
                 DATA_ADDRESS: if(S_lost_active) complete(8'd1);
-                    else if(S_stop) complete(8'd8); else S_state<=DATA_LATCH;
+                    else if(S_stop) complete(8'd8);
+                    // Pause admission at sector boundaries in SCHEDULE. Once
+                    // admitted, the consumer reserves up to 512 bytes; do not
+                    // discard/re-read this sector on each short memory stall.
+                    else S_state<=DATA_LATCH;
                 DATA_LATCH: if(S_lost_active) complete(8'd1);
                     else if(S_stop) complete(8'd8);
                     else begin O_byte_data<=I_buffer_data; S_state<=DATA_OUT; end

@@ -1,8 +1,11 @@
 `timescale 1ns/1ps
-// Whole lean control/data integration with independent sector and frame-memory
-// peers. Native SDRAM is exercised separately by tb_lean_video, not replaced here
-// as evidence for the physical device, vendor HDMI, PLL or SD SPI.
-module tb_lean_player_core;
+// Whole lean control/data integration. Defaults to independent sector and frame
+// peers; optional modes select the real SD SPI or native SDRAM controllers.
+// Device/sector substitutes cannot prove physical timing, PLL or HDMI behavior.
+module tb_lean_player_core #(
+    parameter integer USE_SD_SPI=0,
+    parameter integer USE_NATIVE_SDRAM=0
+);
     reg S_host=0,S_video=0,S_reset=1,S_card=1;
     reg [3:0] S_keys=0,S_bad_images=0;
     reg S_rx=0;
@@ -18,38 +21,88 @@ module tb_lean_player_core;
     wire [23:0] S_rgb,S_left,S_right;
     wire [3:0] S_current,S_error;
     wire [4:0] S_images;
-    reg S_result=0;
-    reg [31:0] S_result_data=0,S_result_tag=0;
+    reg S_model_result=0;
+    reg [31:0] S_model_data=0,S_model_tag=0;
+    wire S_result,S_read_ready,S_write_ready,S_idle,S_memory_ready,S_memory_error;
+    wire [31:0] S_result_data,S_result_tag;
+    wire [3:0] S_result_error;
     reg [31:0] S_memory[0:614399];
     reg [3:0] S_write_pipe=0;
     integer S_cycle=0,S_audio_samples=0,S_commits=0,S_case=0,S_i;
+    integer S_stall_samples=0;
+    integer S_image_bytes=0,S_image_before=0,S_total_writes=0,S_image_sectors=0;
+    time S_first_frame_time,S_switch_start,S_switch_duration;
+    reg S_check_sequence=0,S_have_previous=0,S_block_writes=0;
+    reg [15:0] S_previous_sample;
+    reg [31:0] S_stall_offset;
     reg S_test_pass=0,S_status_checked=0;
-    wire S_read_ready=!S_result || S_result_ready;
-    wire S_write_ready=S_cycle%7!=0;
-    wire S_idle=S_write_pipe==0;
     wire S_request,S_request_ready,S_sd_valid,S_sd_ready,S_last,S_done,S_done_ready,S_cancel,S_cancel_ready,S_ack,S_ack_ready;
     wire [31:0] S_lba;
     wire [7:0] S_count,S_byte;
     wire [1:0] S_context,S_byte_context,S_cancel_context,S_ack_context;
+    wire [1:0] S_priority;
     wire [15:0] S_tag,S_byte_tag,S_cancel_tag,S_ack_tag;
+    wire [1:0] S_done_context;
+    wire [15:0] S_done_tag;
     wire [3:0] S_sd_error;
+    wire S_card_ready,S_card_error;
+    wire [32:0] S_capacity;
     lean_player_core u_player (
         .I_host_clk(S_host),.I_video_clk(S_video),.I_async_reset(S_reset),.I_key_release(S_keys),
         .I_rx_valid(S_rx),.I_rx_error(1'b0),.I_rx_data(S_rx_data),.O_tx_valid(S_tx),.I_tx_ready(1'b1),.O_tx_data(S_tx_data),
-        .I_card_ready(S_card),.I_capacity_sectors(33'd100000),.I_memory_ready(1'b1),.I_memory_error(1'b0),.I_writes_idle(S_idle),
+        .I_card_ready(S_card_ready),.I_capacity_sectors(S_capacity),.I_memory_ready(S_memory_ready),.I_memory_error(S_memory_error),.I_writes_idle(S_idle),
         .O_read_valid(S_read),.I_read_ready(S_read_ready),.O_read_address(S_read_address),.O_read_tag(S_read_tag),
-        .I_result_valid(S_result),.O_result_ready(S_result_ready),.I_result_data(S_result_data),.I_result_tag(S_result_tag),.I_result_error(4'd0),
+        .I_result_valid(S_result),.O_result_ready(S_result_ready),.I_result_data(S_result_data),.I_result_tag(S_result_tag),.I_result_error(S_result_error),
         .O_write_valid(S_write),.I_write_ready(S_write_ready),.O_write_address(S_write_address),.O_write_data(S_write_data),
         .O_de(S_de),.O_valid(S_valid),.O_x(S_x),.O_y(S_y),.O_rgb(S_rgb),
         .O_sample_valid(S_sample),.O_audio_left(S_left),.O_audio_right(S_right),
         .O_acr_valid(),.O_acr_n(),.O_acr_cts(),.O_active(S_active),.O_busy(S_busy),.O_current(S_current),.O_count(S_images),.O_error(S_error),
-        .O_request_valid(S_request),.I_request_ready(S_request_ready),.O_lba(S_lba),.O_count_sectors(S_count),.O_context(S_context),.O_priority(),.O_tag(S_tag),
+        .O_request_valid(S_request),.I_request_ready(S_request_ready),.O_lba(S_lba),.O_count_sectors(S_count),.O_context(S_context),.O_priority(S_priority),.O_tag(S_tag),
         .I_sd_byte_valid(S_sd_valid),.O_sd_byte_ready(S_sd_ready),.I_sd_byte_data(S_byte),.I_sector_last(S_last),.I_request_last(S_last),
         .I_sd_byte_context(S_byte_context),.I_sd_byte_tag(S_byte_tag),.I_sd_done_valid(S_done),.O_sd_done_ready(S_done_ready),
-        .I_sd_done_context(S_byte_context),.I_sd_done_tag(S_byte_tag),.I_sd_done_error(S_sd_error),
+        .I_sd_done_context(S_done_context),.I_sd_done_tag(S_done_tag),.I_sd_done_error(S_sd_error),
         .O_cancel_valid(S_cancel),.I_cancel_ready(S_cancel_ready),.O_cancel_context(S_cancel_context),.O_cancel_tag(S_cancel_tag),
         .I_cancel_done_valid(S_ack),.O_cancel_done_ready(S_ack_ready),.I_cancel_done_context(S_ack_context),.I_cancel_done_tag(S_ack_tag)
     );
+    generate if(USE_NATIVE_SDRAM) begin: g_native
+        reg memory_clk=0;
+        always @(S_host) memory_clk<=#7 S_host;
+        wire sclk,cke,ras,cas,we,clock_fault,memory_error,device_fault;
+        wire [10:0] addr;
+        wire [1:0] ba;
+        wire [3:0] dm;
+        wire [31:0] dq;
+        assign S_memory_error=clock_fault || memory_error || device_fault;
+        lean_frame_memory #(.INIT_CYCLES(USE_SD_SPI ? 25000 : 32)) u_memory (
+            .I_clk(S_host),.I_clk_sft(memory_clk),.I_reset(S_reset),
+            .I_read_valid(S_read),.O_read_ready(S_read_ready),.I_read_address(S_read_address),.I_read_tag(S_read_tag),
+            .O_read_result_valid(S_result),.I_read_result_ready(S_result_ready),
+            .O_read_data(S_result_data),.O_read_tag(S_result_tag),.O_read_error(S_result_error),
+            .I_write_valid(S_write),.O_write_ready(S_write_ready),.I_write_address(S_write_address),.I_write_data(S_write_data),
+            .O_writes_idle(S_idle),.O_initialized(S_memory_ready),.O_clock_fault(clock_fault),.O_memory_error(memory_error),
+            .O_sdram_clk(sclk),.O_sdram_cke(cke),.O_sdram_ras_n(ras),.O_sdram_cas_n(cas),.O_sdram_we_n(we),
+            .O_sdram_addr(addr),.O_sdram_ba(ba),.O_sdram_dm(dm),.IO_sdram_dq(dq));
+        sim_sdr_device u_device (
+            .I_clk(sclk),.I_reset(S_reset),.I_cke(cke),.I_ras_n(ras),.I_cas_n(cas),.I_we_n(we),
+            .I_addr(addr),.I_ba(ba),.I_dm(dm),.IO_dq(dq),.O_fault(device_fault),
+            .O_reads(),.O_writes(),.O_refreshes());
+    end else begin: g_ideal
+        assign S_read_ready=!S_model_result || S_result_ready;
+        assign S_write_ready=!S_block_writes && S_cycle%7!=0;
+        assign S_idle=S_write_pipe==0;
+        assign S_result=S_model_result;
+        assign S_result_data=S_model_data;
+        assign S_result_tag=S_model_tag;
+        assign S_result_error=4'd0;
+        assign S_memory_ready=1'b1;
+        assign S_memory_error=1'b0;
+    end endgenerate
+    generate if(!USE_SD_SPI) begin: g_sector
+    assign S_card_ready=S_card;
+    assign S_card_error=1'b0;
+    assign S_capacity=33'd100000;
+    assign S_done_context=S_byte_context;
+    assign S_done_tag=S_byte_tag;
     sim_lean_media_card u_card (
         .I_clk(S_host),.I_reset(S_reset),.I_present(S_card),.I_bad_images(S_bad_images),
         .I_request_valid(S_request),.O_request_ready(S_request_ready),.I_lba(S_lba),.I_count(S_count),.I_context(S_context),.I_tag(S_tag),
@@ -58,26 +111,57 @@ module tb_lean_player_core;
         .I_cancel_valid(S_cancel),.O_cancel_ready(S_cancel_ready),.I_cancel_context(S_cancel_context),.I_cancel_tag(S_cancel_tag),
         .O_cancel_done_valid(S_ack),.I_cancel_done_ready(S_ack_ready),.O_cancel_context(S_ack_context),.O_cancel_tag(S_ack_tag)
     );
+    end else begin: g_spi
+        reg S_sdclk=0;
+        always #10 S_sdclk=~S_sdclk;
+        wire ncs,sclk,mosi,miso,card_clk,card_ncs,card_mosi,card_miso,card_error;
+        assign S_card_error=card_error;
+        assign #7 card_clk=sclk;
+        assign #7 card_ncs=ncs;
+        assign #7 card_mosi=mosi;
+        assign #2 miso=card_miso;
+        sd_storage #(.WORK_DIVIDER(16'd8),.POWERUP_CYCLES(USE_NATIVE_SDRAM ? 32'd100000 : 32'd1000)) u_storage (
+            .I_host_clk(S_host),.I_sd_clk(S_sdclk),.I_async_reset(S_reset),
+            .I_request_valid(S_request),.O_request_ready(S_request_ready),.I_lba(S_lba),.I_count(S_count),
+            .I_context(S_context),.I_priority(S_priority),.I_tag(S_tag),.I_urgent_context(3'd0),
+            .O_byte_valid(S_sd_valid),.I_byte_ready(S_sd_ready),.O_byte_data(S_byte),
+            .O_sector_last(S_last),.O_request_last(),.O_byte_context(S_byte_context),.O_byte_tag(S_byte_tag),
+            .O_done_valid(S_done),.I_done_ready(S_done_ready),.O_done_context(S_done_context),.O_done_tag(S_done_tag),.O_done_error(S_sd_error),
+            .I_cancel_valid(S_cancel),.O_cancel_ready(S_cancel_ready),.I_cancel_context(S_cancel_context),.I_cancel_tag(S_cancel_tag),
+            .O_cancel_done_valid(S_ack),.I_cancel_done_ready(S_ack_ready),.O_cancel_done_context(S_ack_context),.O_cancel_done_tag(S_ack_tag),
+            .O_card_ready(S_card_ready),.O_capacity_sectors(S_capacity),
+            .O_sd_ncs(ncs),.O_sd_sclk(sclk),.O_sd_mosi(mosi),.I_sd_miso(miso),
+            .O_card_present(),.O_sd_high_capacity(),.O_sd_card_error());
+        sd_spi_card_model #(.OUTPUT_DELAY_NS(14),.BUSY_BYTES(50),.IMAGE_LEAN(1)) u_card (
+            .I_ncs(card_ncs),.I_sclk(card_clk),.I_mosi(card_mosi),.O_miso(card_miso),
+            .I_present(S_card),.I_legacy(1'b0),.I_high_capacity(1'b1),.I_allow_init(1'b1),.I_corrupt_crc(1'b0),
+            .O_protocol_error(card_error),.O_read_count(),.O_last_lba(),.O_probe_count(),.O_cmd16_count(),.O_acmd41_count());
+    end endgenerate
     task fail;
         input [511:0] text;
         begin $display("FAIL: lean integration case %0d: %0s index=%0d error=%0d state=%0d",S_case,text,S_current,S_error,u_player.S_state); $stop; end
     endtask
     always @(posedge S_host) begin
-        if(S_reset) begin S_cycle<=0; S_result<=0; S_write_pipe<=0; end
+        if(S_reset) begin S_cycle<=0; S_model_result<=0; S_write_pipe<=0; end
         else begin
             S_cycle<=S_cycle+1;
+            if(S_request && S_request_ready && S_context==0 && S_lba>=1233 && S_lba<9233)
+                S_image_sectors=S_image_sectors+1;
+            if(u_player.S_byte_valid && u_player.S_byte_context==0 && u_player.S_byte_ready)
+                S_image_bytes=S_image_bytes+1;
             S_write_pipe<={S_write_pipe[2:0],S_write && S_write_ready};
-            if(S_read_ready) begin
-                S_result<=S_read;
+            if(!USE_NATIVE_SDRAM && S_read_ready) begin
+                S_model_result<=S_read;
                 if(S_read) begin
                     if(S_read_address>=614400) fail("read outside double buffer");
-                    S_result_data<=S_memory[S_read_address]; S_result_tag<=S_read_tag;
+                    S_model_data<=S_memory[S_read_address]; S_model_tag<=S_read_tag;
                 end
             end
             if(S_write && S_write_ready) begin
                 if(S_write_address>=614400) fail("write outside double buffer");
                 if(S_active && (S_write_address>=307200)==u_player.u_scanout.S_slot) fail("active frame overwritten");
                 S_memory[S_write_address]<=S_write_data;
+                S_total_writes=S_total_writes+1;
             end
             if(u_player.S_commit_done) begin
                 if(!S_idle) fail("commit preceded write retirement");
@@ -87,6 +171,13 @@ module tb_lean_player_core;
     end
     always @(posedge S_video) begin
         #1;
+        if(!S_reset && S_check_sequence && S_sample) begin
+            if(S_have_previous && S_left[23:8]!==
+               ((!$test$plusargs("LONG_AUDIO") && S_previous_sample==($test$plusargs("MED_AUDIO") ? 16'd9191 : 16'd1699)) ? 16'd1000 : S_previous_sample+16'd1))
+                fail("audio sample skipped, repeated or muted during stall");
+            S_previous_sample=S_left[23:8]; S_have_previous=1;
+            S_stall_samples=S_stall_samples+1;
+        end
         if(!S_reset && S_sample && (S_left!=0 || S_right!=0)) begin
             if($signed(S_left)!==-$signed(S_right)) fail("audio channels corrupt");
             S_audio_samples=S_audio_samples+1;
@@ -106,6 +197,10 @@ module tb_lean_player_core;
         begin
             wait(S_active && !S_busy && S_current==index && S_commits>=commits);
             if(S_images!=4 || S_error!=0) fail("catalog or load failed");
+            if(commits==1 && index==0 && S_image_sectors!=1801)
+                fail("first image re-read data sectors after backpressure");
+            if(commits==2 && index==1 && S_image_sectors!=3602)
+                fail("second image re-read data sectors after backpressure");
             $display("PASS: lean integrated image %0d commit %0d",index,S_commits);
         end
     endtask
@@ -118,6 +213,18 @@ module tb_lean_player_core;
             @(posedge S_video); #1;
             while(!(S_de && S_x==x && S_y==y)) begin @(posedge S_video); #1; end
             if(!S_valid || S_rgb!==expected) fail("displayed frame does not match selected file");
+        end
+    endtask
+    task check_first_frame_memory;
+        integer pixel,x,y;
+        reg [7:0] red,green,blue;
+        begin
+            for(pixel=0;pixel<307200;pixel=pixel+1) begin
+                x=pixel%640; y=pixel/640;
+                red=x; green=y; blue=x^y;
+                if(S_memory[pixel]!=={8'hff,red,green,blue})
+                    fail("image memory differs after backpressure recovery");
+            end
         end
     endtask
     initial begin
@@ -134,6 +241,107 @@ module tb_lean_player_core;
         S_status_checked=1;
     end
     initial begin
+        if($test$plusargs("NATIVE_MEDIA")) begin
+            repeat(12) @(negedge S_host); S_reset=0;
+            send_byte("A"); send_byte("0"); send_byte(13);
+            if($test$plusargs("BOARD_MEDIA")) begin
+                wait(u_player.u_audio.S_play_sync && u_player.S_pending_status[8:6]==4);
+                S_check_sequence=1;
+            end
+            wait_image(0,1); S_first_frame_time=$time;
+            check_pixel(321,201,0);
+            if(S_total_writes!=307200 || S_image_sectors!=1801)
+                fail("first image performed redundant sector reads or clears/writes");
+            S_check_sequence=1; S_switch_start=$time;
+            key(2); wait_image(1,2); S_switch_duration=$time-S_switch_start; S_check_sequence=0;
+            check_pixel(417,302,1);
+            $display("NATIVE_MEDIA first_frame_ns=%0d switch_ns=%0d writes=%0d underflows=%0d samples=%0d",
+                S_first_frame_time,S_switch_duration,S_total_writes,u_player.u_audio.O_underflows,S_stall_samples);
+            if(S_total_writes!=614400 || S_image_sectors!=3602 || S_memory_error || S_card_error || u_player.u_audio.O_underflows!=0 ||
+               S_stall_samples<100) fail("native memory/audio/image integration failed");
+            if($test$plusargs("BOARD_MEDIA") && (S_first_frame_time>64'd5000000000 || S_switch_duration>64'd5000000000))
+                fail("model startup or image switch exceeded 5 seconds");
+            S_test_pass=1; $display("PASS: startup and switch with native SDRAM, active scanout and continuous WAV"); $finish;
+        end
+        if($test$plusargs("SUSTAINED")) begin
+            repeat(12) @(negedge S_host); S_reset=0;
+            wait(u_player.u_audio.S_play_sync && u_player.S_pending_status[8:6]==4);
+            S_check_sequence=1;
+            S_image_before=S_image_bytes;
+            #500000000;
+            $display("SUSTAINED samples=%0d underflows=%0d image_bytes=%0d fifo=%0d",
+                S_stall_samples,u_player.u_audio.O_underflows,S_image_bytes-S_image_before,
+                u_player.u_audio.u_fifo.O_write_level);
+            if(S_stall_samples<23990 || u_player.u_audio.O_underflows!=0 ||
+               S_image_bytes<=S_image_before) fail("sustained shared-storage playback starved");
+            S_test_pass=1; $display("PASS: 500ms sustained audio, limited card bandwidth and image progress"); $finish;
+        end
+        if($test$plusargs("SPI_CONTEND")) begin
+            repeat(12) @(negedge S_host); S_reset=0;
+            wait(u_player.u_loader.S_state==2 && u_player.u_audio.S_play_sync &&
+                 u_player.S_pending_status[8:6]==4);
+            S_check_sequence=1;
+            S_image_before=S_image_bytes;
+            #30000000;
+            S_check_sequence=0;
+            $display("SPI_AUDIO samples=%0d underflows=%0d image_bytes_in_30ms=%0d", S_stall_samples,u_player.u_audio.O_underflows,S_image_bytes-S_image_before);
+            if(S_stall_samples<1400 || S_image_bytes<=S_image_before ||
+               u_player.u_audio.O_underflows!=0 || S_card_error)
+                fail("SPI playback starved or card protocol failed");
+            S_test_pass=1; $display("PASS: real SD SPI controller, file reader, BMP and continuous WAV"); $finish;
+        end
+        if($test$plusargs("IMAGE_BACKPRESSURE")) begin
+            repeat(12) @(negedge S_host); S_reset=0;
+            wait(u_player.u_loader.S_state==2 && u_player.u_audio.S_play_sync &&
+                 u_player.S_pending_status[8:6]==4);
+            // Block a pixel already being written, then let the BMP parser
+            // propagate that backpressure into the shared file byte stream.
+            wait(u_player.u_loader.S_px_valid);
+            @(negedge S_host); S_block_writes=1;
+            wait(u_player.S_image_pause && u_player.S_image_count>=8);
+            S_stall_offset=u_player.u_audio.O_offset;
+            S_check_sequence=1;
+            // Exceed even the full 8192-frame FIFO's 170.7 ms capacity:
+            // continuity must come from ongoing card service, not stored audio.
+            #220000000;
+            S_check_sequence=0;
+            $display("BACKPRESSURE offsets=%0d->%0d samples=%0d underflows=%0d", S_stall_offset,u_player.u_audio.O_offset,S_stall_samples,u_player.u_audio.O_underflows);
+            if(u_player.u_audio.O_offset<=S_stall_offset || S_stall_samples<10500 ||
+               u_player.u_audio.O_underflows!=0) fail("audio did not progress during image stall");
+            @(negedge S_host); S_block_writes=0;
+            wait_image(0,1); check_first_frame_memory; check_pixel(321,201,0);
+            if(u_player.u_audio.O_underflows!=0) fail("audio starved after image stall recovery");
+            S_test_pass=1; $display("PASS: audio stays continuous during image stall and image resumes intact"); $finish;
+        end
+        if($test$plusargs("SHARED_CONTENTION")) begin
+            // Realistic sustained byte rate with image and WAV reads sharing
+            // the actual file/sector arbiter and a fixed-rate audio consumer.
+            repeat(12) @(negedge S_host); S_reset=0;
+            wait(u_player.u_loader.S_state==2 && u_player.u_audio.S_play_sync);
+            $display("AUDIO_START size=%0d samples=%0d fifo=%0d audio_state=%0d", u_player.u_audio.S_size,S_audio_samples,u_player.u_audio.u_fifo.O_write_level,u_player.u_audio.S_state);
+            #60000000;
+            $display("AUDIO_DIAG underflows=%0d samples=%0d fifo_level=%0d audio_state=%0d file_state=%0d pending=%b", u_player.u_audio.O_underflows,S_audio_samples,u_player.u_audio.u_fifo.O_write_level,u_player.u_audio.S_state,u_player.u_source.u_files.S_state,u_player.u_source.S_pending);
+            if(u_player.u_audio.O_underflows!=0 || S_audio_samples<500)
+                fail("audio starved during concurrent image load");
+            if(u_player.u_loader.S_state!=2) fail("concurrent image load not exercised");
+            S_test_pass=1; $display("PASS: concurrent image and audio at limited sector rate"); $finish;
+        end
+        if($test$plusargs("CLEAR_CONTENTION")) begin
+            // Hold image clearing longer than the audio FIFO's capacity. Audio
+            // must continue using the shared storage port until clear resumes.
+            S_block_writes=1;
+            force u_player.S_job_rotation=2'd1;
+            repeat(12) @(negedge S_host); S_reset=0;
+            wait(u_player.u_loader.S_state==1);
+            wait(u_player.u_audio.S_play_sync);
+            #40000000;
+            if(u_player.u_audio.O_underflows!=0 || S_audio_samples<500)
+                fail("audio starved during image clear");
+            if(u_player.u_loader.S_state!=1) fail("clear stall not exercised");
+            @(negedge S_host); S_block_writes=0;
+            release u_player.S_job_rotation;
+            S_test_pass=1; $display("PASS: audio progresses during blocked image clear"); $finish;
+        end
         repeat(12) @(negedge S_host); S_reset=0;
         send_byte("A"); send_byte("0"); send_byte(13);
         S_case=1; wait_image(0,1); check_pixel(321,201,0);
@@ -151,7 +359,11 @@ module tb_lean_player_core;
         if(!S_status_checked) fail("diagnostic status test did not finish");
         S_test_pass=1; $display("PASS: lean player four files, UART/keys, concurrent WAV, bad-file skip and card recovery"); $finish;
     end
-    initial begin #1000000000; fail("watchdog"); end
+    initial begin
+        if($test$plusargs("BOARD_MEDIA")) #(64'd12000000000);
+        else #1000000000;
+        fail("watchdog");
+    end
     initial forever begin
         #10000000;
         $display("PROGRESS: t=%0t case=%0d app=%0d source=%0d loader=%0d lba=%0d byte_offset=%0d commits=%0d",

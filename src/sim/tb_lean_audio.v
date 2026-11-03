@@ -13,8 +13,8 @@ module tb_lean_audio;
     reg [2:0] S_peer=0;
     reg [31:0] S_cursor=0,S_end=0,S_done_bytes=0;
     integer S_cycle=0,S_requests=0,S_samples=0,S_acrs=0,S_loops=0;
-    reg S_started=0,S_test_pass=0;
-    wire S_ready=S_peer==0;
+    reg S_started=0,S_test_pass=0,S_hold=0,S_hold_done=0;
+    wire S_ready=S_peer==0 && !S_hold;
     wire S_begin=S_peer==1;
     wire S_bytes=S_peer==2 && S_cycle%5!=0;
     wire S_done=S_peer==3;
@@ -55,7 +55,7 @@ module tb_lean_audio;
         .I_begin_valid(S_begin),.O_begin_ready(S_begin_ready),.I_file_size(32'd2844),.I_begin_error(8'd0),
         .I_byte_valid(S_bytes),.O_byte_ready(S_byte_ready),.I_byte_data(file_byte(S_cursor)),.I_byte_offset(S_cursor),
         .I_file_done(S_done),.I_file_error(8'd0),.I_file_bytes(S_done_bytes),.I_file_eof(S_end==2844),
-        .O_cancel(S_cancel),.O_error(S_error),.I_mute(S_mute),.I_volume(S_volume),
+        .O_cancel(S_cancel),.O_reserve_storage(),.O_error(S_error),.I_mute(S_mute),.I_volume(S_volume),
         .O_sample_valid(S_sample),.O_left(S_left),.O_right(S_right),.O_acr_valid(S_acr),.O_acr_n(S_n),.O_acr_cts(S_cts),.O_underflows(S_underflows)
     );
     task fail;
@@ -68,7 +68,7 @@ module tb_lean_audio;
             S_cycle<=S_cycle+1;
             if(S_error!=0 || S_cancel) fail("unexpected parser/cancel error");
             case(S_peer)
-                0:if(S_command) begin
+                0:if(S_command && S_ready) begin
                     if(S_length!=2048 || (S_offset!=0 && S_offset!=2048)) fail("unbounded or incorrect refill");
                     S_requests=S_requests+1;
                     if(S_offset==0) S_loops=S_loops+1;
@@ -112,9 +112,24 @@ module tb_lean_audio;
         wait(S_samples>=800); @(negedge S_video); S_volume=2;
         wait(S_samples>=1000); @(negedge S_video); S_mute=1;
         wait(S_samples>=1032); @(negedge S_video); S_mute=0; S_volume=4;
-        wait(S_samples>=1450); @(negedge S_video);
-        if(S_underflows!=0 || S_loops<3 || S_acrs<2) fail("refill continuity or ACR coverage missing");
+        wait(S_hold_done);
+        // More than two complete 8192-frame address wraps exercise banking
+        // and pointer reuse when the installed TD RAM model is selected.
+        wait(S_samples>=($test$plusargs("FIFO_WRAP") ? 18000 : 3000)); @(negedge S_video);
+        if(S_underflows!=0 || S_loops<3 || S_acrs<2 || !S_hold_done) fail("refill continuity or ACR coverage missing");
         S_test_pass=1; $display("PASS: lean WAV bounded refills, signed PCM, loop, mute, volume and ACR"); $finish;
     end
-    initial begin #100000000; fail("watchdog"); end
+    // Emulate a temporary shared-storage delay while preserving the real
+    // playback clock. PCM comparisons above catch skipped/zero samples.
+    initial begin
+        wait(S_samples>=100);
+        @(negedge S_host); S_hold=1;
+        #100000000;
+        @(negedge S_host); S_hold=0; S_hold_done=1;
+    end
+    initial begin
+        if($test$plusargs("FIFO_WRAP")) #500000000;
+        else #300000000;
+        fail("watchdog");
+    end
 endmodule

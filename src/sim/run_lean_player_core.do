@@ -29,14 +29,60 @@ vlog -work work [file join $script_dir .. rtl media lean_audio.v]
 vlog -work work [file join $script_dir .. rtl media lean_image_loader.v]
 vlog -work work [file join $script_dir .. rtl top lean_player_core.v]
 vlog -work work [file join $script_dir .. rtl top lean_player_ctrl.v]
+vlog -work work [file join $script_dir .. rtl storage native_sdram_ctrl.v]
+vlog -work work [file join $script_dir .. rtl storage lean_frame_memory.v]
+vlog -work work [file join $script_dir models sim_sdr_device.v]
 source [file join $script_dir load_player_bram.do]
 vlog -work work [file join $script_dir models sim_lean_media_card.v]
-vlog -work work [file join $script_dir tb_lean_player_core.v]
-if {[llength $bram_extra_tops]} {
-    vsim -voptargs=+acc work.tb_lean_player_core [lindex $bram_extra_tops 0]
-} else {
-    vsim -voptargs=+acc work.tb_lean_player_core
+foreach source {spi_byte_master sd_spi_phy sd_csd_decode sd_sector_reader sector_cdc_bridge sd_storage} {
+    vlog -work work [file join $script_dir .. rtl storage ${source}.v]
 }
+vlog -work work [file join $script_dir models sd_spi_card_model.v]
+vlog -work work [file join $script_dir tb_lean_player_core.v]
+set test_args {}
+set test_generics {}
+set selected_modes 0
+foreach mode {BOARD_MEDIA BOARD_CONTENTION NATIVE_MEDIA SUSTAINED SPI_CONTENTION SPI_MEDIUM IMAGE_BACKPRESSURE CLEAR_CONTENTION SHARED_CONTENTION SHARED_LONG} {
+    set env_name FPGA_PLAYER_$mode
+    if {[info exists ::env($env_name)] && $::env($env_name) eq "1"} {incr selected_modes}
+}
+if {$selected_modes>1} {error "Select only one lean_player_core scenario per run"}
+if {[info exists ::env(FPGA_PLAYER_BOARD_MEDIA)] && $::env(FPGA_PLAYER_BOARD_MEDIA) eq "1"} {
+    set test_args {+NATIVE_MEDIA +BOARD_MEDIA +LONG_AUDIO}
+    set test_generics {-gUSE_SD_SPI=1 -gUSE_NATIVE_SDRAM=1}
+}
+if {[info exists ::env(FPGA_PLAYER_BOARD_CONTENTION)] && $::env(FPGA_PLAYER_BOARD_CONTENTION) eq "1"} {
+    set test_args {+SPI_CONTEND +LONG_AUDIO}
+    set test_generics {-gUSE_SD_SPI=1 -gUSE_NATIVE_SDRAM=1}
+}
+if {[info exists ::env(FPGA_PLAYER_NATIVE_MEDIA)] && $::env(FPGA_PLAYER_NATIVE_MEDIA) eq "1"} {
+    set test_args {+NATIVE_MEDIA +MED_AUDIO}
+    set test_generics {-gUSE_NATIVE_SDRAM=1}
+}
+if {[info exists ::env(FPGA_PLAYER_SUSTAINED)] && $::env(FPGA_PLAYER_SUSTAINED) eq "1"} {
+    set test_args {+SUSTAINED +LONG_AUDIO +SD_BYTE_CYCLES=320}
+}
+if {[info exists ::env(FPGA_PLAYER_SPI_CONTENTION)] && $::env(FPGA_PLAYER_SPI_CONTENTION) eq "1"} {
+    set test_args {+SPI_CONTEND}
+    set test_generics {-gUSE_SD_SPI=1}
+}
+if {[info exists ::env(FPGA_PLAYER_SPI_MEDIUM)] && $::env(FPGA_PLAYER_SPI_MEDIUM) eq "1"} {
+    set test_args {+SPI_CONTEND +MED_AUDIO}
+    set test_generics {-gUSE_SD_SPI=1}
+}
+if {[info exists ::env(FPGA_PLAYER_IMAGE_BACKPRESSURE)] && $::env(FPGA_PLAYER_IMAGE_BACKPRESSURE) eq "1"} {
+    set test_args {+IMAGE_BACKPRESSURE +LONG_AUDIO}
+}
+if {[info exists ::env(FPGA_PLAYER_CLEAR_CONTENTION)] && $::env(FPGA_PLAYER_CLEAR_CONTENTION) eq "1"} {
+    set test_args {+CLEAR_CONTENTION}
+}
+if {[info exists ::env(FPGA_PLAYER_SHARED_CONTENTION)] && $::env(FPGA_PLAYER_SHARED_CONTENTION) eq "1"} {
+    set test_args {+SHARED_CONTENTION +REALISTIC_SD}
+}
+if {[info exists ::env(FPGA_PLAYER_SHARED_LONG)] && $::env(FPGA_PLAYER_SHARED_LONG) eq "1"} {
+    set test_args {+SHARED_CONTENTION +REALISTIC_SD +LONG_AUDIO}
+}
+vsim -voptargs=+acc {*}$test_generics work.tb_lean_player_core {*}$bram_extra_tops {*}$test_args
 onfinish stop
 run -all
 if {[examine -radix binary /tb_lean_player_core/S_test_pass] ne "1"} {quit -force -code 1}

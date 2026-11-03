@@ -27,7 +27,7 @@ module tb_lean_media_source;
     integer S_i,S_j,S_model_state=0,S_model_index=0,S_model_delay=0;
     reg [31:0] S_model_lba;
     integer S_seen[0:1],S_terminals=0,S_cases=0;
-    reg S_check=0,S_test_pass=0;
+    reg S_check=0,S_test_pass=0,S_image_pause=0;
     reg [31:0] S_expected_offset[0:1];
     reg [7:0] S_expected_mask[0:1];
     always #4 S_clk=~S_clk;
@@ -35,7 +35,7 @@ module tb_lean_media_source;
         .I_clk(S_clk),.I_reset(S_reset),.I_card_ready(S_card),.I_capacity_sectors(33'd100000),
         .O_catalog_ready(S_catalog),.O_image_count(S_count),.O_audio_found(S_audio_found),
         .O_catalog_overflow(S_overflow),.O_catalog_error(S_catalog_error),
-        .I_command_valid(S_command),.O_command_ready(S_command_ready),.I_command_audio(S_audio),.I_image_index(S_image),
+        .I_command_valid(S_command),.O_command_ready(S_command_ready),.I_image_pause(S_image_pause),.I_command_audio(S_audio),.I_image_index(S_image),
         .I_offset(S_offset),.I_length(S_length),.O_begin_valid(S_begin),.I_begin_ready(S_begin_ready),
         .O_begin_audio(S_begin_audio),.O_file_size(S_size),.O_begin_error(S_begin_error),
         .O_byte_valid(S_valid),.I_byte_ready(S_byte_ready),.O_byte_data(S_byte),.O_byte_context(S_byte_context),
@@ -168,12 +168,21 @@ module tb_lean_media_source;
         repeat(6) @(negedge S_clk); S_reset=0;
         wait(S_catalog); #1;
         if(S_count!=4 || !S_audio_found || S_catalog_error!=0 || S_overflow) fail("root catalog mismatch");
-        S_cases=1; S_check=1;
+        S_cases=1; S_check=1; S_image_pause=1;
         command(0,0,0,32'hffffffff,0);
         command(1,0,0,64,0);
         S_byte_ready=1;
+        wait(S_terminals==1); #1;
+        if(S_seen[0]!=0 || S_seen[1]!=64) fail("paused image blocked audio");
+        S_image_pause=0;
         wait(S_terminals==2); #1;
         if(S_seen[0]!=700 || S_seen[1]!=64) fail("concurrent fragmented reads incomplete");
+        // A paused request can still be canceled without waiting for resume.
+        S_check=0; S_image_pause=1; S_before=S_terminals;
+        command(0,0,0,700,0);
+        wait(u_dut.S_pending[0]); @(negedge S_clk); S_cancel=1;
+        wait(S_done); if(S_done_error!=8) fail("paused cancel terminal mismatch");
+        wait(S_terminals==S_before+1); @(negedge S_clk); S_cancel=0; S_image_pause=0; S_check=1;
         S_cases=2; command(0,15,0,20,7);
         S_cases=3; S_expected_offset[0]=3; S_expected_mask[0]=8'ha5;
         S_before=S_terminals; command(0,1,3,70,0);

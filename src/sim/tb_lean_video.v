@@ -32,7 +32,7 @@ module tb_lean_video;
     lean_image_loader u_loader (
         .I_clk(S_host),.I_reset(S_reset),.I_start_valid(S_start),.O_start_ready(S_start_ready),
         .I_file_size(32'd921654),.I_rotation(S_rotation),.I_slot(S_slot),
-        .I_byte_valid(S_byte_valid),.O_byte_ready(S_byte_ready),.I_byte_data(S_byte),.I_byte_last(S_last),
+        .I_byte_valid(S_byte_valid),.O_byte_ready(S_byte_ready),.O_stream_pause(),.I_byte_data(S_byte),.I_byte_last(S_last),
         .I_file_done(S_file_done),.I_file_error(S_file_error),.I_memory_error(S_clock_fault || S_mem_error),.I_writes_idle(S_idle),
         .O_cancel(S_cancel),.O_write_valid(S_write),.I_write_ready(S_write_ready),.O_write_address(S_write_address),
         .O_write_data(S_write_data),.O_done_valid(S_done),.I_done_ready(S_done_ready),.O_error(S_error),.O_pixels(S_pixels)

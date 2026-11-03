@@ -63,7 +63,7 @@ module tb_scan_chain;
         .O_catalog_ready(catalog_ready), .O_image_count(image_count),
         .O_audio_found(audio_found), .O_catalog_overflow(catalog_overflow),
         .O_catalog_error(catalog_error), .O_dbg_type(),
-        .I_command_valid(1'b0), .O_command_ready(), .I_command_audio(1'b0),
+        .I_command_valid(1'b0), .O_command_ready(), .I_image_pause(1'b0),.I_command_audio(1'b0),
         .I_image_index(4'd0), .I_offset(32'd0), .I_length(32'd0),
         .O_begin_valid(), .I_begin_ready(1'b1), .O_begin_audio(), .O_file_size(), .O_begin_error(),
         .O_byte_valid(), .I_byte_ready(1'b1), .O_byte_data(), .O_byte_context(), .O_byte_offset(), .O_byte_last(),

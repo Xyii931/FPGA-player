@@ -28,7 +28,7 @@ module tb_fat32_chain_walk;
     integer S_before,S_terminals_before;
     reg [31:0] S_model_value;
     reg [76:0] S_held;
-    reg S_test_pass=0;
+    reg S_test_pass=0,S_keep_cache=1;
     fat32_chain_walk u_walk (
         .I_clk(S_clk),.I_reset(S_reset),.I_mounted(S_mounted),.I_fat_lba(S_fat_lba),.I_cluster_count(S_cluster_count),
         .I_start_valid(S_start),.O_start_ready(S_start_ready),.I_first_cluster(S_first),.I_target_index(S_target),.I_hop_limit(S_limit),
@@ -69,6 +69,11 @@ module tb_fat32_chain_walk;
         input [31:0] target;
         begin
             S_cases=S_cases+1; S_before=S_requests; S_terminals_before=S_terminals;
+            // Fault cases change the virtual card: remount invalidates copies.
+            if(!S_keep_cache) begin
+                @(negedge S_clk); S_mounted=0;
+                repeat(2) @(negedge S_clk); S_mounted=1;
+            end
             @(negedge S_clk); S_target=target; S_start=1;
             @(posedge S_clk); while(!S_start_ready) @(posedge S_clk);
             @(negedge S_clk); S_start=0;
@@ -129,10 +134,14 @@ module tb_fat32_chain_walk;
         normal_chain; #39; S_reset=0;
         launch(0); expect_result(0,0,2,0,0);
         launch(1); expect_result(0,0,7,1,1);
-        launch(2); expect_result(0,0,130,2,1);
-        launch(3); expect_result(0,0,131,3,2);
-        launch(4); expect_result(0,0,260,4,2);
-        launch(5); expect_result(0,1,260,4,3);
+        // Destroy the shared RAM contents after returning ownership. A cache
+        // hit must use its own copy, not stale data in fat32_sector_port.
+        for(S_i=0;S_i<512;S_i=S_i+1) u_port.S_ram[S_i]=8'hff;
+        launch(2); expect_result(0,0,130,2,0);
+        launch(3); expect_result(0,0,131,3,1);
+        launch(4); expect_result(0,0,260,4,0);
+        launch(5); expect_result(0,1,260,4,1);
+        S_keep_cache=0;
         S_fat[2]=0; launch(1); expect_result(9,0,2,0,1);
         S_fat[2]=1; launch(1); expect_result(9,0,2,0,1);
         S_fat[2]=32'h0ffffff7; launch(1); expect_result(9,0,2,0,1);

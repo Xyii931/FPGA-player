@@ -10,6 +10,7 @@ module lean_image_loader (
     input wire I_slot,
     input wire I_byte_valid,
     output wire O_byte_ready,
+    output wire O_stream_pause,
     input wire [7:0] I_byte_data,
     input wire I_byte_last,I_file_done,
     input wire [7:0] I_file_error,
@@ -29,6 +30,7 @@ module lean_image_loader (
     reg [1:0] S_rotation;
     reg S_slot,S_parser_seen,S_file_seen;
     reg [18:0] S_clear;
+    reg [8:0] S_clear_column;
     // Capture each pixel with its 640-pixel row offset. The frame memory's own
     // write register then only adds base+x, splitting the long address chain.
     reg S_px_valid;
@@ -70,6 +72,7 @@ module lean_image_loader (
     // bmp_parser emits RRGGBBAA; the lean frame stores ffRRGGBB.
     assign O_write_data=S_state==CLEAR ? 32'd0 : S_px_data;
     assign S_pixel_ready=S_state==LOAD && !S_abort && (S_drop || S_px_free);
+    assign O_stream_pause=!I_reset && S_state==CLEAR;
     assign O_byte_ready=!I_reset && (S_state==LOAD ? S_byte_ready : S_state==RETIRE);
     assign O_cancel=S_state!=IDLE && S_state!=DONE && S_abort && !S_file_seen;
     assign O_done_valid=!I_reset && S_state==DONE;
@@ -85,7 +88,7 @@ module lean_image_loader (
     always @(posedge I_clk or posedge I_reset) begin
         if(I_reset) begin
             S_state<=IDLE; S_rotation<=0; S_slot<=0; S_parser_seen<=0; S_file_seen<=0;
-            S_clear<=0; S_px_valid<=0; S_px_x<=0; S_px_row<=0; S_px_data<=0;
+            S_clear<=0; S_clear_column<=0; S_px_valid<=0; S_px_x<=0; S_px_row<=0; S_px_data<=0;
             O_error<=0; O_pixels<=0;
         end else begin
             if(S_state!=IDLE && S_state!=DONE) begin
@@ -102,14 +105,20 @@ module lean_image_loader (
             end
             case(S_state)
                 IDLE:if(S_start) begin
-                    S_rotation<=I_rotation; S_slot<=I_slot; S_clear<=0; O_pixels<=0;
+                    S_rotation<=I_rotation; S_slot<=I_slot; S_clear<=0; S_clear_column<=0; O_pixels<=0;
                     S_px_valid<=0;
-                    S_parser_seen<=0; S_file_seen<=0; O_error<=0; S_state<=CLEAR;
+                    S_parser_seen<=0; S_file_seen<=0; O_error<=0;
+                    // Full-size 0/180 degree loads overwrite every pixel.
+                    // Quarter turns clear only the two 140-pixel side bars.
+                    S_state<=I_rotation[0] ? CLEAR : LOAD;
                 end
                 CLEAR:if(S_abort) S_state<=RETIRE;
                     else if(I_write_ready) begin
                         if(S_clear==307199) S_state<=LOAD;
-                        else S_clear<=S_clear+1'b1;
+                        else begin
+                            S_clear<=S_clear+(S_clear_column==139 ? 19'd361 : 19'd1);
+                            S_clear_column<=S_clear_column==279 ? 9'd0 : S_clear_column+1'b1;
+                        end
                     end
                 LOAD:begin
                     if(S_px_accept) begin

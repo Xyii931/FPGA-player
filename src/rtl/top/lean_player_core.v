@@ -85,7 +85,41 @@ module lean_player_core #(
     wire [1:0] S_byte_context,S_file_context;
     wire S_loader_ready,S_loader_done,S_loader_cancel;
     wire [3:0] S_loader_error;
-    wire S_image_byte_ready;
+    wire S_image_byte_ready,S_image_stream_pause,S_audio_reserve;
+    // Reserve a whole checked sector before admitting an image read. SDRAM
+    // stalls cannot strand audio behind a partly consumed image sector.
+    (* ram_style="bram" *) reg [8:0] S_image_queue[0:1023];
+    reg [9:0] S_image_wr,S_image_rd;
+    reg [10:0] S_image_count;
+    reg [8:0] S_image_head;
+    reg S_image_valid;
+    wire S_image_push=S_byte_valid && S_byte_context==0 && S_byte_ready;
+    wire S_image_pop=S_image_valid && S_image_byte_ready;
+    wire S_image_pause=S_image_stream_pause || S_image_count>512 || S_audio_reserve;
+    wire [9:0] S_image_read_address=S_image_rd+S_image_pop;
+    wire S_image_head_available=S_image_count>{10'd0,S_image_pop};
+    always @(posedge I_host_clk) begin
+        if(S_image_push) S_image_queue[S_image_wr]<={S_byte_last,S_byte};
+        if((!S_image_valid || S_image_byte_ready) && S_image_head_available)
+            S_image_head<=S_image_queue[S_image_read_address];
+    end
+    always @(posedge I_host_clk or posedge S_hrst) begin
+        if(S_hrst) begin S_image_wr<=0; S_image_rd<=0; S_image_count<=0; S_image_valid<=0; end
+        else if(!S_catalog || !I_card_ready || S_loader_cancel) begin
+            S_image_wr<=0; S_image_rd<=0; S_image_count<=0; S_image_valid<=0;
+        end else begin
+            if(!S_image_valid || S_image_byte_ready) S_image_valid<=S_image_head_available;
+            if(S_image_push) begin
+                S_image_wr<=S_image_wr+1'b1;
+            end
+            if(S_image_pop) S_image_rd<=S_image_rd+1'b1;
+            case({S_image_push,S_image_pop})
+                2'b10:S_image_count<=S_image_count+1'b1;
+                2'b01:S_image_count<=S_image_count-1'b1;
+                default:begin end
+            endcase
+        end
+    end
     wire S_audio_request,S_audio_command_ready,S_audio_begin_ready,S_audio_byte_ready,S_audio_cancel;
     wire [31:0] S_audio_offset,S_audio_length;
     wire [3:0] S_audio_error;
@@ -99,11 +133,12 @@ module lean_player_core #(
     assign S_audio_command_ready=S_command_ready && S_select_audio;
     assign S_begin_ready=S_begin_audio ? S_audio_begin_ready :
         S_state==BEGIN && (S_begin_error!=0 || S_loader_ready);
-    assign S_byte_ready=S_byte_context==1 ? S_audio_byte_ready : S_image_byte_ready;
+    assign S_byte_ready=S_byte_context==1 ? S_audio_byte_ready : S_image_count<1024;
     lean_media_source u_source (
         .I_clk(I_host_clk),.I_reset(S_hrst),.I_card_ready(I_card_ready),.I_capacity_sectors(I_capacity_sectors),
         .O_catalog_ready(S_catalog),.O_image_count(O_count),.O_audio_found(S_audio_found),.O_catalog_error(S_catalog_error),.O_dbg_type(S_mount_type),
         .I_command_valid(S_command),.O_command_ready(S_command_ready),.I_command_audio(S_select_audio),
+        .I_image_pause(S_image_pause),
         .I_image_index(S_job_index),.I_offset(S_select_audio ? S_audio_offset : 32'd0),
         .I_length(S_select_audio ? S_audio_length : 32'hffffffff),
         .O_begin_valid(S_begin),.I_begin_ready(S_begin_ready),.O_begin_audio(S_begin_audio),.O_file_size(S_file_size),.O_begin_error(S_begin_error),
@@ -126,7 +161,8 @@ module lean_player_core #(
         .I_clk(I_host_clk),.I_reset(S_hrst),
         .I_start_valid(S_begin && !S_begin_audio && S_state==BEGIN && S_begin_error==0),.O_start_ready(S_loader_ready),
         .I_file_size(S_file_size),.I_rotation(S_job_rotation),.I_slot(S_job_slot),
-        .I_byte_valid(S_byte_valid && S_byte_context==0),.O_byte_ready(S_image_byte_ready),.I_byte_data(S_byte),.I_byte_last(S_byte_last),
+        .I_byte_valid(S_image_valid),.O_byte_ready(S_image_byte_ready),.O_stream_pause(S_image_stream_pause),
+        .I_byte_data(S_image_head[7:0]),.I_byte_last(S_image_head[8]),
         .I_file_done(S_file_done && S_file_context==0),.I_file_error(S_file_error),
         .I_memory_error(I_memory_error || S_scanout_fault),.I_writes_idle(I_writes_idle),
         .O_cancel(S_loader_cancel),.O_write_valid(O_write_valid),.I_write_ready(I_write_ready),
@@ -187,7 +223,8 @@ module lean_player_core #(
         .I_begin_valid(S_begin && S_begin_audio),.O_begin_ready(S_audio_begin_ready),.I_file_size(S_file_size),.I_begin_error(S_begin_error),
         .I_byte_valid(S_byte_valid && S_byte_context==1),.O_byte_ready(S_audio_byte_ready),.I_byte_data(S_byte),.I_byte_offset(S_byte_offset),
         .I_file_done(S_file_done && S_file_context==1),.I_file_error(S_file_error),.I_file_bytes(S_file_bytes),.I_file_eof(S_file_eof),
-        .O_cancel(S_audio_cancel),.O_error(S_audio_error),.I_mute(S_pending_status[5]),.I_volume(S_pending_status[8:6]),
+        .O_cancel(S_audio_cancel),.O_reserve_storage(S_audio_reserve),.O_error(S_audio_error),
+        .I_mute(S_pending_status[5]),.I_volume(S_pending_status[8:6]),
         .O_sample_valid(O_sample_valid),.O_left(O_audio_left),.O_right(O_audio_right),
         .O_acr_valid(O_acr_valid),.O_acr_n(O_acr_n),.O_acr_cts(O_acr_cts),
         .O_underflows()

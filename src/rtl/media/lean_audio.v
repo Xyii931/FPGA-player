@@ -20,6 +20,7 @@ module lean_audio (
     input wire [31:0] I_file_bytes,
     input wire I_file_eof,
     output wire O_cancel,
+    output wire O_reserve_storage,
     output reg [3:0] O_error,
     input wire I_mute,
     input wire [2:0] I_volume,
@@ -51,6 +52,9 @@ module lean_audio (
     assign O_begin_ready=!S_hrst && S_state==BEGIN && (S_started || S_parser_ready);
     assign O_byte_ready=!S_hrst && (S_decode_failed || O_error!=0 || !I_catalog_ready ? 1'b1 : S_parser_byte_ready);
     assign O_cancel=S_state==STREAM && (S_decode_failed || S_abort);
+    // Reserve card service throughout the command/refill turnaround as well
+    // as while a request is pending. Image reads may use the surplus bandwidth.
+    assign O_reserve_storage=!S_hrst && I_catalog_ready && I_audio_found && O_error==0 && S_write_low;
     wav_parser u_parser (
         .I_clk(I_host_clk),.I_reset(S_hrst),
         .I_start_valid(S_begin && !S_started && I_begin_error==0),.O_start_ready(S_parser_ready),
@@ -62,7 +66,9 @@ module lean_audio (
         .O_sample_valid(S_sample),.I_sample_ready(S_sample_ready),.O_left(S_left),.O_right(S_right),
         .O_busy(), .O_error_code(), .O_tag(), .O_header_valid(), .O_data_offset(), .O_data_bytes(), .O_total_frames(), .O_sample_index(), .O_sample_last()
     );
-    audio_frame_fifo u_fifo (
+    // Request another 512-frame block with roughly 128 ms of audio remaining.
+    // The 8192-frame FIFO has room for a full refill at this threshold.
+    audio_frame_fifo #(.ADDR_BITS(13),.PREFILL_FRAMES(6144),.LOW_FRAMES(6144)) u_fifo (
         .I_write_clk(I_host_clk),.I_read_clk(I_video_clk),.I_async_flush(I_async_reset),
         .I_valid(S_sample),.O_ready(S_sample_ready),.I_left(S_left),.I_right(S_right),
         .O_valid(S_fifo_valid),.I_ready(S_fifo_ready),.O_left(S_fifo_left),.O_right(S_fifo_right),

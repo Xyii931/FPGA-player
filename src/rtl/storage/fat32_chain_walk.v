@@ -26,13 +26,21 @@ module fat32_chain_walk (
 );
     localparam [3:0] IDLE=0,NEED_FAT=1,READ_SEND=2,READ_WAIT=3,
         ENTRY_ADDRESS=4,ENTRY_BYTE=5,CHECK_ENTRY=6,RESULT=7,READ_CHECK=8,CHECK_START=9,
-        ADVANCE_ENTRY=10;
+        ADVANCE_ENTRY=10,CACHE_PRIME=11,CACHE_COPY=12;
     reg [3:0] S_state;
     reg [31:0] S_fat_lba,S_count,S_first,S_target,S_limit,S_current;
-    reg [31:0] S_cache_lba,S_entry,S_tortoise,S_power,S_lam;
+    reg [31:0] S_entry,S_tortoise,S_power,S_lam;
+    reg [31:0] S_cache_lba[0:1],S_cache_fat,S_cache_count;
+    reg [1:0] S_cache_valid;
+    reg S_cache_slot,S_cache_victim;
+    reg [8:0] S_copy_address;
+    // These copies outlive ownership of the shared checked-sector buffer.
+    // Two FAT sectors keep image and audio chains from evicting one another.
+    (* ram_style="bram" *) reg [7:0] S_cache[0:1023];
+    reg [7:0] S_cache_data;
     reg [31:0] S_last_cluster;
     reg [1:0] S_entry_byte;
-    reg S_cache_valid,S_canceled,S_lost;
+    reg S_canceled,S_lost;
     reg [7:0] S_read_error;
     reg S_at_target,S_checkpoint_due;
     wire [32:0] S_entry_lba={1'b0,S_fat_lba}+{8'd0,S_current[31:7]};
@@ -51,7 +59,12 @@ module fat32_chain_walk (
     assign O_read_lba=S_entry_lba[31:0];
     assign O_read_abort=S_state==READ_WAIT && (S_canceled || I_cancel || S_lost || !I_mounted);
     assign O_read_result_ready=!I_reset && S_state==READ_WAIT;
-    assign O_buffer_address={S_current[6:0],2'b00}+{7'd0,S_entry_byte};
+    assign O_buffer_address=S_copy_address;
+    always @(posedge I_clk) begin
+        S_cache_data<=S_cache[{S_cache_slot,S_current[6:0],S_entry_byte}];
+        if(S_state==CACHE_COPY)
+            S_cache[{S_cache_slot,S_copy_address}]<=I_buffer_data;
+    end
     task finish;
         input [7:0] error_code;
         begin O_error<=error_code; S_state<=RESULT; end
@@ -59,7 +72,9 @@ module fat32_chain_walk (
     always @(posedge I_clk or posedge I_reset) begin
         if(I_reset) begin
             S_state<=IDLE; S_fat_lba<=0; S_count<=0; S_first<=0; S_target<=0; S_limit<=0; S_current<=0;
-            S_cache_lba<=0; S_entry<=0; S_tortoise<=0; S_power<=1; S_lam<=0; S_entry_byte<=0;
+            S_cache_lba[0]<=0; S_cache_lba[1]<=0; S_cache_fat<=0; S_cache_count<=0;
+            S_cache_slot<=0; S_cache_victim<=0; S_copy_address<=0;
+            S_entry<=0; S_tortoise<=0; S_power<=1; S_lam<=0; S_entry_byte<=0;
             S_last_cluster<=0;
             S_cache_valid<=0; S_canceled<=0; S_lost<=0; S_read_error<=0;
             S_at_target<=0; S_checkpoint_due<=0;
@@ -75,7 +90,9 @@ module fat32_chain_walk (
                     S_target<=I_target_index; S_limit<=I_hop_limit;
                     S_last_cluster<=I_cluster_count+32'd1;
                     S_current<=I_first_cluster; S_tortoise<=I_first_cluster; S_power<=1; S_lam<=0;
-                    S_cache_valid<=0; S_canceled<=0; S_lost<=0; S_entry_byte<=0;
+                    if(I_fat_lba!=S_cache_fat || I_cluster_count!=S_cache_count) S_cache_valid<=0;
+                    S_cache_fat<=I_fat_lba; S_cache_count<=I_cluster_count;
+                    S_canceled<=0; S_lost<=0; S_entry_byte<=0;
                     O_cluster<=I_first_cluster; O_hops<=0; O_eoc<=0; O_error<=0; O_storage_error<=0;
                     S_state<=CHECK_START;
                 end
@@ -92,9 +109,14 @@ module fat32_chain_walk (
                 NEED_FAT: begin
                     if(O_hops>=S_limit) finish(8'd10);
                     else if(S_entry_lba[32]) finish(8'd9);
-                    else if(S_cache_valid && S_cache_lba==S_entry_lba[31:0]) begin
-                        S_entry_byte<=0; S_state<=ENTRY_ADDRESS;
-                    end else S_state<=READ_SEND;
+                    else if(S_cache_valid[0] && S_cache_lba[0]==S_entry_lba[31:0]) begin
+                        S_cache_slot<=0; S_cache_victim<=1; S_entry_byte<=0; S_state<=ENTRY_ADDRESS;
+                    end else if(S_cache_valid[1] && S_cache_lba[1]==S_entry_lba[31:0]) begin
+                        S_cache_slot<=1; S_cache_victim<=0; S_entry_byte<=0; S_state<=ENTRY_ADDRESS;
+                    end else begin
+                        S_cache_slot<=S_cache_victim; S_cache_valid[S_cache_victim]<=0;
+                        S_state<=READ_SEND;
+                    end
                 end
                 READ_SEND: if(O_read_valid && I_read_ready) S_state<=READ_WAIT;
                 READ_WAIT: if(I_read_result_valid) begin
@@ -106,12 +128,19 @@ module fat32_chain_walk (
                     else if(S_canceled || I_cancel || S_read_error==8) finish(8'd8);
                     else if(S_read_error!=0) finish(8'd2);
                     else begin
-                        S_cache_valid<=1; S_cache_lba<=S_entry_lba[31:0]; S_entry_byte<=0; S_state<=ENTRY_ADDRESS;
+                        S_copy_address<=0; S_state<=CACHE_PRIME;
                     end
+                end
+                CACHE_PRIME:S_state<=CACHE_COPY;
+                CACHE_COPY:begin
+                    if(S_copy_address==511) begin
+                        S_cache_valid[S_cache_slot]<=1; S_cache_lba[S_cache_slot]<=S_entry_lba[31:0];
+                        S_cache_victim<=!S_cache_slot; S_entry_byte<=0; S_state<=ENTRY_ADDRESS;
+                    end else begin S_copy_address<=S_copy_address+1'b1; S_state<=CACHE_PRIME; end
                 end
                 ENTRY_ADDRESS: S_state<=ENTRY_BYTE;
                 ENTRY_BYTE: begin
-                    S_entry[S_entry_byte*8+:8]<=I_buffer_data;
+                    S_entry[S_entry_byte*8+:8]<=S_cache_data;
                     if(S_entry_byte==3) S_state<=CHECK_ENTRY;
                     else begin S_entry_byte<=S_entry_byte+2'd1; S_state<=ENTRY_ADDRESS; end
                 end
@@ -136,6 +165,7 @@ module fat32_chain_walk (
                 RESULT: if(I_result_ready) S_state<=IDLE;
                 default:finish(8'd9);
             endcase
+            if(!I_mounted) S_cache_valid<=0;
             // READ_WAIT must retire its submitted physical/CDC transaction first.
             if(S_state!=IDLE && S_state!=RESULT && S_state!=READ_WAIT) begin
                 if(S_lost || !I_mounted) finish(8'd1);

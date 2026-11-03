@@ -104,7 +104,7 @@ if {[catch {
             set_param flow enable_seed on
             # open_project -single_run uses the active in-memory properties.
             # -run only updates the saved project and did not affect place.
-            set_param place seed 1
+            set_param place seed 3
             set_param place pr_strategy 2
             set_param place effort high
         }
@@ -123,16 +123,20 @@ if {[catch {
         export_db ${run_name}_place.db
         puts "PLAYER_TD_STAGE route"
         set step route
-        commit_param -step route
         # TD 6.2.168116 can create conflicting routes when its automatic hold
         # insertion runs inside route. The documented standalone fix_hold flow
         # repairs the same design after a clean route checkpoint instead.
         # Timing acceptance still uses the final report AFTER hold repair.
         set_param route fix_hold off
-        if {[info exists ::env(FPGA_PLAYER_ROUTE_MULTITRY)] &&
-            $::env(FPGA_PLAYER_ROUTE_MULTITRY) eq "1"} {
+        if {$project_name eq "lean_player" ||
+            ([info exists ::env(FPGA_PLAYER_ROUTE_MULTITRY)] &&
+             $::env(FPGA_PLAYER_ROUTE_MULTITRY) eq "1")} {
             set_param route multi_try_route_bad_qor_check off
         }
+        # Commit AFTER overrides, as in the standalone physical flow; retain
+        # the effective settings with the result rather than just the defaults.
+        commit_param -step route
+        report_param -stage route -file ${run_name}_route.params
         route
         export_db ${run_name}_route.db
         puts "PLAYER_TD_STAGE hold_fix"

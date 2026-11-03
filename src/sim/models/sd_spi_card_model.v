@@ -4,7 +4,8 @@
 module sd_spi_card_model #(
     parameter integer OUTPUT_DELAY_NS=0,
     parameter integer BUSY_BYTES=0,
-    parameter integer IMAGE_FAT32=0
+    parameter integer IMAGE_FAT32=0,
+    parameter integer IMAGE_LEAN=0
 ) (
     input wire I_ncs,I_sclk,I_mosi,
     output wire O_miso,
@@ -75,6 +76,27 @@ module sd_spi_card_model #(
             else img_byte=8'h00;
         end
     endfunction
+    // Reuse the exact media image from the player integration fixture while
+    // exercising the real SPI stack. This is still a behavioural card model.
+    generate if(IMAGE_LEAN) begin: g_image
+        sim_lean_media_card u_image(.I_clk(1'b0),.I_reset(1'b0),.I_present(1'b1),
+            .I_bad_images(4'd0),.I_request_valid(1'b0),.O_request_ready(),.I_lba(32'd0),.I_count(8'd0),
+            .I_context(2'd0),.I_tag(16'd0),.O_byte_valid(),.I_byte_ready(1'b0),.O_byte_data(),.O_last(),
+            .O_context(),.O_tag(),.O_done_valid(),.I_done_ready(1'b0),.O_error(),
+            .I_cancel_valid(1'b0),.O_cancel_ready(),.I_cancel_context(2'd0),.I_cancel_tag(16'd0),
+            .O_cancel_done_valid(),.I_cancel_done_ready(1'b0),.O_cancel_context(),.O_cancel_tag());
+        function [7:0] data_byte;
+            input [31:0] lba;
+            input integer offset;
+            begin data_byte=u_image.disk_byte(lba,offset); end
+        endfunction
+    end else begin: g_image
+        function [7:0] data_byte;
+            input [31:0] lba;
+            input integer offset;
+            begin data_byte=IMAGE_FAT32 ? img_byte(lba,offset) : (lba+offset); end
+        endfunction
+    end endgenerate
     task push;
         input [7:0] byte_value;
         begin
@@ -150,7 +172,7 @@ module sd_spi_card_model #(
                         push(0); push(8'hff);
             for(k=0;k<BUSY_BYTES;k=k+1) push(8'hff);
             push(8'hfe); crc=0;
-                        for(k=0;k<512;k=k+1) begin value=IMAGE_FAT32 ? img_byte(lba,k) : (lba+k); push(value); crc=crc_byte(crc,value); end
+                        for(k=0;k<512;k=k+1) begin value=g_image.data_byte(lba,k); push(value); crc=crc_byte(crc,value); end
                         push(crc[15:8]); push(crc[7:0]^(I_corrupt_crc ? 8'h01 : 8'h00));
                     end
                 end

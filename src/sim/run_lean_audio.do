@@ -16,10 +16,14 @@ vlog -work work [file join $script_dir .. rtl media audio_frame_fifo.v]
 vlog -work work [file join $script_dir .. rtl media lean_audio.v]
 source [file join $script_dir load_player_bram.do]
 vlog -work work [file join $script_dir tb_lean_audio.v]
+set test_args {}
+if {[info exists ::env(FPGA_PLAYER_AUDIO_WRAP)] && $::env(FPGA_PLAYER_AUDIO_WRAP) eq "1"} {
+    set test_args {+FIFO_WRAP}
+}
 if {[llength $bram_extra_tops]} {
-    vsim -voptargs=+acc work.tb_lean_audio [lindex $bram_extra_tops 0]
+    eval vsim [list -voptargs=+acc work.tb_lean_audio [lindex $bram_extra_tops 0]] $test_args
 } else {
-    vsim -voptargs=+acc work.tb_lean_audio
+    eval vsim [list -voptargs=+acc work.tb_lean_audio] $test_args
 }
 onfinish stop
 run -all

@@ -28,10 +28,19 @@ module sim_lean_media_card (
     output reg [1:0] O_cancel_context,
     output reg [15:0] O_cancel_tag
 );
+    localparam integer LONG_WAV_SIZE=20000044;
+    wire S_long_audio=$test$plusargs("LONG_AUDIO");
+    wire S_medium_audio=$test$plusargs("MED_AUDIO");
+    wire [31:0] S_wav_size=S_long_audio ? LONG_WAV_SIZE : (S_medium_audio ? 32'd32812 : 32'd2844);
     reg [1:0] S_state;
     reg [31:0] S_lba,S_cycle;
     reg [8:0] S_index;
     reg S_ack;
+    integer S_byte_period;
+    initial begin
+        S_byte_period=0;
+        if($value$plusargs("SD_BYTE_CYCLES=%d",S_byte_period)) begin end
+    end
     reg [7:0] S_boot[0:511],S_root[0:511];
     integer S_i,S_j,S_base,S_cluster;
     task put32;
@@ -55,7 +64,7 @@ module sim_lean_media_card (
         put32(32,70000); put32(36,600); put32(44,2); S_boot[510]=8'h55; S_boot[511]=8'haa;
         entry(0,3,921654,"ONE     BMP"); entry(1,2003,921654,"TWO     BMP");
         entry(2,4003,921654,"THREE   BMP"); entry(3,6003,921654,"FOUR    BMP");
-        entry(4,9003,2844,"BGM     WAV");
+        entry(4,9003,$test$plusargs("LONG_AUDIO") ? LONG_WAV_SIZE : ($test$plusargs("MED_AUDIO") ? 32812 : 2844),"BGM     WAV");
     end
     function [31:0] fat_value;
         input integer cluster;
@@ -68,8 +77,8 @@ module sim_lean_media_card (
                 if(cluster>=first && cluster<first+1800) fat_value=cluster+1;
                 if(cluster==first+1800) fat_value=32'h0fffffff;
             end
-            if(cluster>=9003 && cluster<9008) fat_value=cluster+1;
-            if(cluster==9008) fat_value=32'h0fffffff;
+            if(cluster>=9003 && cluster<9003+(S_wav_size+511)/512-1) fat_value=cluster+1;
+            if(cluster==9003+(S_wav_size+511)/512-1) fat_value=32'h0fffffff;
         end
     endfunction
     function [7:0] bmp_byte;
@@ -112,8 +121,8 @@ module sim_lean_media_card (
                     36:wav_byte="d"; 37:wav_byte="a"; 38:wav_byte="t"; 39:wav_byte="a";
                     default:begin end
                 endcase
-                if(pos>=4 && pos<8) begin value=2836; wav_byte=value>>((pos-4)*8); end
-                if(pos>=40 && pos<44) begin value=2800; wav_byte=value>>((pos-40)*8); end
+                if(pos>=4 && pos<8) begin value=S_wav_size-8; wav_byte=value>>((pos-4)*8); end
+                if(pos>=40 && pos<44) begin value=S_wav_size-44; wav_byte=value>>((pos-40)*8); end
             end else begin
                 left=1000+(pos-44)/4; right=-1000-(pos-44)/4;
                 case((pos-44)%4)
@@ -139,12 +148,16 @@ module sim_lean_media_card (
                     first=3+2000*image;
                     if(cluster>=first && cluster<=first+1800) disk_byte=bmp_byte(image,(cluster-first)*512+pos);
                 end
-                if(cluster>=9003 && cluster<=9008) disk_byte=wav_byte((cluster-9003)*512+pos);
+                if(cluster>=9003 && cluster<9003+(S_wav_size+511)/512) disk_byte=wav_byte((cluster-9003)*512+pos);
             end
         end
     endfunction
     assign O_request_ready=S_state==0 && !S_ack;
-    assign O_byte_valid=S_state==1 && S_cycle[2:0]!=0;
+    // Optional rate limit approximates 512-byte transfer at 6.25 MHz SPI.
+    // It is still a sector-level substitute, not a physical SD model.
+    assign O_byte_valid=S_state==1 && (S_byte_period!=0 || S_cycle[2:0]!=0) &&
+        (!$test$plusargs("REALISTIC_SD") || S_cycle%107==0) &&
+        (S_byte_period==0 || S_cycle%S_byte_period==0);
     assign O_byte_data=disk_byte(S_lba,S_index);
     assign O_last=S_index==511;
     assign O_done_valid=S_state==2;

@@ -230,6 +230,15 @@ module tb_fat32_file_reader;
             S_I_cancel_done_ready=1; @(negedge S_I_clk); S_I_cancel_done_ready=0;
         end
     endtask
+    task remount_files;
+        begin
+            // Mutating the read-only card fixture represents replacing media.
+            // Invalidate FAT copies and reload descriptors after remount.
+            @(negedge S_I_clk); S_I_mounted=0;
+            repeat(2) @(negedge S_I_clk); S_I_mounted=1;
+            load_file(0,2,1300,0); load_file(1,3,1400,0); load_file(2,4,1536,0);
+        end
+    endtask
     always @(negedge S_I_clk) begin
         S_cycle=S_cycle+1; S_I_byte_ready=!S_hold_consumer && S_cycle%11>=3;
     end
@@ -323,6 +332,14 @@ module tb_fat32_file_reader;
         wait(&S_finished); #1;
         if(S_order[0]!=0 || S_order[1]!=2) fail("urgent context not chosen at the next sector boundary");
         S_I_urgent_context=0;
+        // A high-priority audio request arrives while the image is looking
+        // up its next cluster. Re-arbitrate after metadata, before image data.
+        S_before=S_data_requests;
+        read_file(0,512,20,20,0,0,16'h0109);
+        wait(u_dut.u_files.O_walk_start);
+        read_file(1,0,20,20,0,3,16'h0209);
+        wait(S_finished[0] && S_finished[1]);
+        if(S_order[S_before]!=1) fail("audio waited behind image data after FAT lookup");
         read_file(0,512,20,20,0,0,16'h0102); wait(S_finished[0]);
         S_before=S_fat_requests;
         read_file(0,600,20,20,0,0,16'h0103); wait(S_finished[0]);
@@ -336,13 +353,13 @@ module tb_fat32_file_reader;
         load_file(1,0,0,0); read_file(1,0,100,0,0,0,16'h0202); wait(S_finished[1]);
         load_file(1,1,10,9); read_file(1,0,10,0,7,0,16'h0203); wait(S_finished[1]);
         load_file(1,3,68768*512,0); load_file(1,3,68768*512+1,9);
-        load_file(1,3,1400,0); S_fat[3]=32'h0fffffff;
+        S_fat[3]=32'h0fffffff; remount_files;
         read_file(1,0,1100,512,12,0,16'h0204); wait(S_finished[1]);
-        load_file(1,3,1400,0); S_fat[3]=0;
+        S_fat[3]=0; remount_files;
         read_file(1,0,1100,512,9,0,16'h0205); wait(S_finished[1]);
-        load_file(1,3,1800,0); S_fat[3]=8; S_fat[8]=3;
+        S_fat[3]=8; S_fat[8]=3; remount_files; load_file(1,3,1800,0);
         read_file(1,0,1800,1024,9,0,16'h0206); wait(S_finished[1]); S_fat[8]=10;
-        load_file(2,4,1536,0); S_inject_error=4;
+        remount_files; S_inject_error=4;
         read_file(2,0,10,0,2,0,16'h0305); wait(S_finished[2]);
         if(S_O_done_storage_error!=4) fail("storage CRC error lost"); S_inject_error=0;
         load_file(1,3,1400,0); S_allow_ack=0; S_I_done_ready=0; S_before=S_physical_done;

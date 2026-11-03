@@ -17,7 +17,7 @@ module tb_lean_image_loader;
     lean_image_loader u_dut (
         .I_clk(S_clk),.I_reset(S_reset),.I_start_valid(S_start),.O_start_ready(S_ready),
         .I_file_size(32'd921654),.I_rotation(2'd0),.I_slot(1'b1),
-        .I_byte_valid(S_valid),.O_byte_ready(S_byte_ready),.I_byte_data(S_byte),.I_byte_last(S_last),
+        .I_byte_valid(S_valid),.O_byte_ready(S_byte_ready),.O_stream_pause(),.I_byte_data(S_byte),.I_byte_last(S_last),
         .I_file_done(S_file_done),.I_file_error(8'd0),.I_memory_error(1'b0),.I_writes_idle(S_idle),
         .O_cancel(S_cancel),.O_write_valid(S_write),.I_write_ready(S_write_ready),
         .O_write_address(S_address),.O_write_data(S_data),.O_done_valid(S_done),
@@ -36,11 +36,8 @@ module tb_lean_image_loader;
         end
     endtask
     always @(posedge S_clk) if(!S_reset && S_write && S_write_ready) begin
-        if(S_writes<307200) begin
-            if(S_address!==21'd307200+S_writes || S_data!==0)
-                fail("clear address/data changed or invalid header emitted pixels");
-        end else if(S_case!=3 || S_address!==307200+
-            640*(479-(S_writes-307200)/640)+(S_writes-307200)%640 || S_data!==32'hff333333)
+        if(S_case!=3 || S_address!==307200+
+            640*(479-S_writes/640)+S_writes%640 || S_data!==32'hff333333)
             fail("successful image pixel/address mismatch");
         S_writes=S_writes+1;
     end
@@ -65,7 +62,7 @@ module tb_lean_image_loader;
             end
             S_valid=0;
             wait(S_cancel); @(negedge S_clk);
-            if(S_done || S_pixels!=0 || S_writes!=307200) fail("published failed job early");
+            if(S_done || S_pixels!=0 || S_writes!=0) fail("published failed job early");
             repeat(12) begin
                 @(negedge S_clk);
                 if(!S_cancel || S_done || S_write) fail("cancel not held until file retirement");
@@ -113,7 +110,7 @@ module tb_lean_image_loader;
             end
         join
         wait(S_done);
-        if(S_error || S_pixels!=307200 || S_writes!=614400)
+        if(S_error || S_pixels!=307200 || S_writes!=307200)
             fail("successful image did not retire after last-pixel stall");
         S_test_pass=1;
         $display("PASS: lean loader errors, cancellation, retirement, reuse and stalled final pixel");
