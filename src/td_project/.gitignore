@@ -1,0 +1,11 @@
+/lean_player_Runs/
+/lean_player.runs/
+/lean_player.cache/
+/*.log
+/*.jou
+/*.bit
+/*.db
+/*.al.bak
+/*.al.user
+/*.lck
+/cdc_*.ts
