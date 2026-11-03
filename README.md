@@ -42,6 +42,8 @@ flowchart LR
 
 准备HX4S20开发板、对应下载器、TF卡及读卡器、HDMI显示设备；串口控制另需与板卡电平匹配的USB转TTL串口。TF卡使用FAT32，将至少4张易区分的合法BMP及一个合法WAV放入根目录。文件按目录出现顺序处理，不按名称排序。
 
+项目随附[当前演示素材](media/README.md)：6张640×480 BMP和20秒背景音乐 `SHORT20.WAV`，将这7个文件复制到TF卡根目录即可使用。
+
 主工程为 [src/td_project/lean_player.al](src/td_project/lean_player.al)，顶层为 `lean_player_top`。板级连线、素材要求、按键、LED、UART协议及演示步骤见[使用说明](docs/使用说明.md)。下载前须先完成[验证与上板](docs/验证与上板.md)中的时序、原语和引脚检查。
 
 ## 开发与复现
@@ -62,6 +64,7 @@ flowchart LR
 | [docs/](docs/README.md) | 使用说明、系统设计、验证状态、赛题与开发板原始资料 |
 | [src/](src/README.md) | 正式RTL、器件IP包装、约束、TD工程和自检脚本 |
 | [src/rtl/](src/rtl/README.md) | 模块导航与连接规则 |
+| [media/](media/README.md) | 当前演示使用的BMP图片、短WAV背景音乐及素材来源 |
 | [reference/](reference/README.md) | 提供的实验例程、厂商IP、原始说明及素材 |
 
 正式工程直接使用厂商HDMI加密核及其PHY/串行器包装，PLL和SDRAM包装保留参数来源注释。参考资料的来源和依赖路径见[参考资料说明](reference/README.md)。构建产物和个人开发笔记不纳入源码提交。
