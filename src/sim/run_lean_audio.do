@@ -14,16 +14,19 @@ vlog -work work [file join $script_dir .. rtl common acr_gen.v]
 vlog -work work [file join $script_dir .. rtl media wav_parser.v]
 vlog -work work [file join $script_dir .. rtl media audio_frame_fifo.v]
 vlog -work work [file join $script_dir .. rtl media lean_audio.v]
+vlog -work work [file join $script_dir .. rtl media lean_audio_cache.v]
 source [file join $script_dir load_player_bram.do]
 vlog -work work [file join $script_dir tb_lean_audio.v]
 set test_args {}
+set test_generics {}
+if {[info exists ::env(FPGA_PLAYER_AUDIO_CACHE)] && $::env(FPGA_PLAYER_AUDIO_CACHE) eq "1"} {set test_generics {-gUSE_AUDIO_CACHE=1}}
 if {[info exists ::env(FPGA_PLAYER_AUDIO_WRAP)] && $::env(FPGA_PLAYER_AUDIO_WRAP) eq "1"} {
     set test_args {+FIFO_WRAP}
 }
 if {[llength $bram_extra_tops]} {
-    eval vsim [list -voptargs=+acc work.tb_lean_audio [lindex $bram_extra_tops 0]] $test_args
+    eval vsim [list -voptargs=+acc] $test_generics [list work.tb_lean_audio [lindex $bram_extra_tops 0]] $test_args
 } else {
-    eval vsim [list -voptargs=+acc work.tb_lean_audio] $test_args
+    eval vsim [list -voptargs=+acc] $test_generics [list work.tb_lean_audio] $test_args
 }
 onfinish stop
 run -all

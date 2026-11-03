@@ -322,6 +322,14 @@
                     <Attr Name="CompileOrder" Val="39"/>
                 </FileInfo>
             </File>
+            <File Path="../rtl/media/lean_audio_cache.v">
+                <FileInfo>
+                    <Attr Name="UsedInSyn" Val="true"/>
+                    <Attr Name="UsedInP&R" Val="true"/>
+                    <Attr Name="BelongTo" Val="design_1"/>
+                    <Attr Name="CompileOrder" Val="47"/>
+                </FileInfo>
+            </File>
             <File Path="../rtl/media/lean_audio.v">
                 <FileInfo>
                     <Attr Name="UsedInSyn" Val="true"/>
@@ -440,14 +448,14 @@
         </Run>
     </Runs>
     <MultiSeed>
-        <Property Enable="true" GenBit="true" EndStep="route" Random="false" Num="1" Init="3" Jobs="1" Save="1" Step="1">
+        <Property Enable="true" GenBit="true" EndStep="route" Random="false" Num="1" Init="2" Jobs="1" Save="1" Step="1">
             <Filter enabled="false">
                 <congestion>100</congestion>
                 <place_swns>0</place_swns>
                 <route_swns>0</route_swns>
             </Filter>
         </Property>
-        <Seeds select="1">3 </Seeds>
+        <Seeds select="1">2 </Seeds>
     </MultiSeed>
     <Project_Settings>
     </Project_Settings>

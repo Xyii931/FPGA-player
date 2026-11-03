@@ -39,7 +39,7 @@ module tb_scan_chain;
         .O_acmd41_count(), .O_protocol_error(card_error)
     );
 
-    sd_storage #(.WORK_DIVIDER(16'd8), .POWERUP_CYCLES(32'd1000)) u_storage (
+    sd_storage #(.WORK_DIVIDER(16'd6), .POWERUP_CYCLES(32'd1000)) u_storage (
         .I_host_clk(host_clk), .I_sd_clk(sd_clk), .I_async_reset(reset),
         .I_request_valid(req_valid), .O_request_ready(req_ready),
         .I_lba(req_lba), .I_count(req_count), .I_context(req_ctx), .I_priority(req_pri),

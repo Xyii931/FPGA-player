@@ -1,5 +1,4 @@
-// Lean board entry. Same physical pins as player_top; Flash remains deselected.
-// Full player_top and its feature modules remain available in the original project.
+// HX4S20 board entry: clocks, TF storage, SDRAM, player and HDMI output.
 module lean_player_top (
     input wire I_clk_50m,
     input wire [3:0] I_key_n,I_switch,
@@ -17,8 +16,7 @@ module lean_player_top (
     wire S_pll_reset=!S_pll_started;
     wire S_clk100,S_clk125,S_clk125s,S_clk25,S_clk5x,S_sys_lock,S_video_lock;
     wire S_global_reset,S_rst_mem,S_rst_video,S_common_reset,S_host_reset;
-    // Same independent startup pulse as the complete entry. TD initial-state
-    // mapping and power-on behavior still require board verification.
+    // Independent PLL startup pulse lasting 16 board-clock cycles.
     initial begin S_pll_count=0; S_pll_started=0; end
     always @(posedge I_clk_50m) if(!S_pll_started) begin
         if(&S_pll_count) S_pll_started<=1;
@@ -61,8 +59,8 @@ module lean_player_top (
     wire [1:0] S_context,S_priority,S_byte_context,S_done_context,S_cancel_context,S_cancel_done_context;
     wire [15:0] S_tag,S_byte_tag,S_done_tag,S_cancel_tag,S_cancel_done_tag;
     wire [3:0] S_sd_error;
-    // 50 MHz / 8 = 6.25 MHz during reads; initialization remains 200 kHz.
-    sd_storage #(.WORK_DIVIDER(16'd8)) u_storage (
+    // 50 MHz / 6 = 8.333 MHz during reads; initialization remains 200 kHz.
+    sd_storage #(.WORK_DIVIDER(16'd6)) u_storage (
         .I_host_clk(S_clk125),.I_sd_clk(I_clk_50m),.I_async_reset(S_host_reset),
         .I_request_valid(S_request),.O_request_ready(S_request_ready),.I_lba(S_lba),.I_count(S_count),
         .I_context(S_context),.I_priority(S_priority),.I_tag(S_tag),.I_urgent_context(3'd0),

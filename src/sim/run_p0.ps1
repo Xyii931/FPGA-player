@@ -22,7 +22,7 @@ $suites = [ordered]@{
         'sector_cdc_bridge', 'fat32_mount', 'fat32_chain_walk', 'fat32_file_reader', 'native_sdram_ctrl', 'scan_chain')
     Media = @('bmp_parser', 'wav_parser', 'async_fifo', 'audio_frame_fifo')
     Lean = @('lean_media_source', 'lean_player_ctrl', 'lean_image_loader',
-        'lean_video', 'lean_audio', 'lean_player_core')
+        'lean_video', 'lean_audio', 'lean_audio_cache', 'lean_player_core')
 }
 $cases = if ($Suite -eq 'All') {
     @($suites.Values | ForEach-Object { $_ } | Select-Object -Unique)

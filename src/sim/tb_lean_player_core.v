@@ -4,7 +4,9 @@
 // Device/sector substitutes cannot prove physical timing, PLL or HDMI behavior.
 module tb_lean_player_core #(
     parameter integer USE_SD_SPI=0,
-    parameter integer USE_NATIVE_SDRAM=0
+    parameter integer USE_NATIVE_SDRAM=0,
+    parameter integer SPI_WORK_DIVIDER=6,
+    parameter integer USE_AUDIO_CACHE=0
 );
     reg S_host=0,S_video=0,S_reset=1,S_card=1;
     reg [3:0] S_keys=0,S_bad_images=0;
@@ -26,12 +28,15 @@ module tb_lean_player_core #(
     wire S_result,S_read_ready,S_write_ready,S_idle,S_memory_ready,S_memory_error;
     wire [31:0] S_result_data,S_result_tag;
     wire [3:0] S_result_error;
-    reg [31:0] S_memory[0:614399];
+    reg [31:0] S_memory[0:2097151];
     reg [3:0] S_write_pipe=0;
     integer S_cycle=0,S_audio_samples=0,S_commits=0,S_case=0,S_i;
     integer S_stall_samples=0;
     integer S_image_bytes=0,S_image_before=0,S_total_writes=0,S_image_sectors=0;
+    integer S_cache_writes=0,S_audio_commands=0,S_audio_sectors=0,S_audio_sector_snapshot=0;
     time S_first_frame_time,S_switch_start,S_switch_duration;
+    time S_reset_time,S_card_time,S_mount_time,S_catalog_time,S_load_time,S_pixels_time;
+    integer S_perf_rotation;
     reg S_check_sequence=0,S_have_previous=0,S_block_writes=0;
     reg [15:0] S_previous_sample;
     reg [31:0] S_stall_offset;
@@ -47,7 +52,7 @@ module tb_lean_player_core #(
     wire [3:0] S_sd_error;
     wire S_card_ready,S_card_error;
     wire [32:0] S_capacity;
-    lean_player_core u_player (
+    lean_player_core #(.AUDIO_CACHE(USE_AUDIO_CACHE)) u_player (
         .I_host_clk(S_host),.I_video_clk(S_video),.I_async_reset(S_reset),.I_key_release(S_keys),
         .I_rx_valid(S_rx),.I_rx_error(1'b0),.I_rx_data(S_rx_data),.O_tx_valid(S_tx),.I_tx_ready(1'b1),.O_tx_data(S_tx_data),
         .I_card_ready(S_card_ready),.I_capacity_sectors(S_capacity),.I_memory_ready(S_memory_ready),.I_memory_error(S_memory_error),.I_writes_idle(S_idle),
@@ -120,7 +125,7 @@ module tb_lean_player_core #(
         assign #7 card_ncs=ncs;
         assign #7 card_mosi=mosi;
         assign #2 miso=card_miso;
-        sd_storage #(.WORK_DIVIDER(16'd8),.POWERUP_CYCLES(USE_NATIVE_SDRAM ? 32'd100000 : 32'd1000)) u_storage (
+        sd_storage #(.WORK_DIVIDER(SPI_WORK_DIVIDER),.POWERUP_CYCLES(USE_NATIVE_SDRAM ? 32'd100000 : 32'd1000)) u_storage (
             .I_host_clk(S_host),.I_sd_clk(S_sdclk),.I_async_reset(S_reset),
             .I_request_valid(S_request),.O_request_ready(S_request_ready),.I_lba(S_lba),.I_count(S_count),
             .I_context(S_context),.I_priority(S_priority),.I_tag(S_tag),.I_urgent_context(3'd0),
@@ -158,11 +163,21 @@ module tb_lean_player_core #(
                 end
             end
             if(S_write && S_write_ready) begin
-                if(S_write_address>=614400) fail("write outside double buffer");
-                if(S_active && (S_write_address>=307200)==u_player.u_scanout.S_slot) fail("active frame overwritten");
-                S_memory[S_write_address]<=S_write_data;
-                S_total_writes=S_total_writes+1;
+                if(S_write_address>=614400 && (!USE_AUDIO_CACHE || S_write_address<1048576))
+                    fail("write outside frame/cache reservations");
+                if(S_write_address<614400 && S_active && (S_write_address>=307200)==u_player.u_scanout.S_slot)
+                    fail("active frame overwritten");
+                // The native device already stores every write. Keep this
+                // shadow RAM only for the independent functional-memory peer.
+                if(!USE_NATIVE_SDRAM) S_memory[S_write_address]<=S_write_data;
+                if(S_write_address<614400) S_total_writes=S_total_writes+1;
+                else S_cache_writes=S_cache_writes+1;
             end
+            if(u_player.S_select_audio && u_player.S_command && u_player.S_command_ready) begin
+                if(USE_AUDIO_CACHE && !S_active) fail("audio cache delayed the first image");
+                S_audio_commands=S_audio_commands+1;
+            end
+            if(S_request && S_request_ready && S_context==1) S_audio_sectors=S_audio_sectors+1;
             if(u_player.S_commit_done) begin
                 if(!S_idle) fail("commit preceded write retirement");
                 S_commits=S_commits+1;
@@ -227,6 +242,40 @@ module tb_lean_player_core #(
             end
         end
     endtask
+    // Compare the actual native device contents after each performance-mode
+    // commit, including all quarter-turn side bars. No second frame RAM needed.
+    generate if(USE_NATIVE_SDRAM) begin: g_frame_check
+        integer pixel,x,y,sx,sy,u,v,base;
+        reg [7:0] red,green,blue;
+        reg [31:0] expected;
+        always @(negedge S_host) if(!S_reset && ($test$plusargs("PERFORMANCE") || $test$plusargs("CACHED_MEDIA")) && u_player.S_commit_done) begin
+            base=u_player.S_job_slot ? 307200 : 0;
+            for(pixel=0;pixel<307200;pixel=pixel+1) begin
+                x=pixel%640; y=pixel/640;
+                sx=x; sy=y; u=0; v=0;
+                case(u_player.S_job_rotation)
+                    1:begin u=y; v=499-x; sx=4*(u/3)+u%3; sy=4*(v/3)+v%3; end
+                    2:begin sx=639-x; sy=479-y; end
+                    3:begin u=479-y; v=x-140; sx=4*(u/3)+u%3; sy=4*(v/3)+v%3; end
+                    default:begin end
+                endcase
+                red=sx+32*u_player.S_job_index; green=sy; blue=sx^sy^u_player.S_job_index;
+                expected=u_player.S_job_rotation[0] && (x<140 || x>=500) ? 32'd0 : {8'hff,red,green,blue};
+                if(g_native.u_device.S_memory[base+pixel]!==expected)
+                    fail("native frame pixel/rotation/side bar mismatch");
+            end
+            $display("PERF_FRAME commit=%0d image=%0d rotation=%0d pixels_checked=307200",
+                S_commits,u_player.S_job_index,u_player.S_job_rotation);
+        end
+    end endgenerate
+    initial if($test$plusargs("PERFORMANCE")) begin
+        wait(!S_reset); S_reset_time=$time;
+        wait(S_card_ready); S_card_time=$time;
+        wait(u_player.u_source.S_mounted); S_mount_time=$time;
+        wait(u_player.S_catalog); S_catalog_time=$time;
+        wait(u_player.u_loader.S_state==2); S_load_time=$time;
+        wait(u_player.S_loader_done); S_pixels_time=$time;
+    end
     initial begin
         wait(!S_reset);
         // Exercise the diagnostic byte through the host-to-video status FIFO.
@@ -241,6 +290,69 @@ module tb_lean_player_core #(
         S_status_checked=1;
     end
     initial begin
+        if($test$plusargs("CACHED_MEDIA")) begin
+            if(!USE_AUDIO_CACHE || !USE_NATIVE_SDRAM) fail("cache integration requires native memory and cache");
+            repeat(12) @(negedge S_host); S_reset=0;
+            send_byte("A"); send_byte("0"); send_byte(13);
+            wait_image(0,1);
+            wait(u_player.S_cache_ready && u_player.u_audio.S_play_sync && u_player.S_pending_status[8:6]==4);
+            S_check_sequence=1; S_audio_sector_snapshot=S_audio_sectors;
+            if(S_audio_commands!=1 || S_cache_writes!=711) fail("cache not loaded exactly once");
+            key(2); wait_image(1,2);
+            key(8); wait_image(1,3);
+            wait(S_stall_samples>=3000);
+            if(S_audio_commands!=1 || S_audio_sectors!=S_audio_sector_snapshot ||
+                u_player.u_audio.O_underflows!=0 || S_memory_error || S_total_writes!=3*307200)
+                fail("cached audio re-read TF, skipped samples or corrupted frames");
+            $display("CACHE_PLAY samples=%0d underflows=%0d audio_file_commands=%0d audio_sectors=%0d image_writes=%0d cache_writes=%0d",
+                S_stall_samples,u_player.u_audio.O_underflows,S_audio_commands,S_audio_sectors,S_total_writes,S_cache_writes);
+            S_check_sequence=0;
+            @(negedge S_host); S_card=0;
+            wait(!u_player.S_catalog); repeat(20) @(negedge S_host);
+            if(u_player.S_cache_ready || u_player.u_audio.S_play_sync) fail("removed media retained its audio cache");
+            @(negedge S_host); S_card=1;
+            wait(S_audio_commands==2); wait(u_player.S_cache_ready && u_player.u_audio.S_play_sync);
+            if(S_cache_writes!=1422 || S_memory_error || S_error!=0) fail("cache media recovery failed");
+            S_test_pass=1; $display("PASS: SDRAM cached WAV, first-image priority, native-memory frame/rotation, audio continuity and media recovery"); $finish;
+        end
+        if($test$plusargs("PERFORMANCE")) begin
+            if(!USE_SD_SPI || !USE_NATIVE_SDRAM) fail("performance mode requires both real controllers");
+            repeat(12) @(negedge S_host); S_reset=0;
+            send_byte("A"); send_byte("0"); send_byte(13);
+            wait(u_player.u_audio.S_play_sync && u_player.S_pending_status[8:6]==4);
+            S_check_sequence=1;
+            wait_image(0,1); S_first_frame_time=$time-S_reset_time;
+            $display("PERF_STARTUP divider=%0d card_ns=%0d mount_ns=%0d catalog_ns=%0d load_begin_ns=%0d pixels_done_ns=%0d first_frame_ns=%0d",
+                SPI_WORK_DIVIDER,S_card_time-S_reset_time,S_mount_time-S_card_time,
+                S_catalog_time-S_mount_time,S_load_time-S_catalog_time,
+                S_pixels_time-S_load_time,S_first_frame_time);
+            if($test$plusargs("ROTATE_ONLY")) begin
+                S_switch_start=$time; key(8); wait_image(0,2);
+                $display("PERF_ROTATE divider=%0d rotation=1 duration_ns=%0d",SPI_WORK_DIVIDER,$time-S_switch_start);
+                if(S_total_writes!=2*307200 || S_image_sectors!=2*1801 ||
+                   S_memory_error || S_card_error || u_player.u_audio.O_underflows!=0 || S_stall_samples<100)
+                    fail("startup/rotation counts, memory, protocol or continuous audio failed");
+                $display("PERF_TOTAL divider=%0d writes=%0d image_sectors=%0d samples=%0d underflows=%0d",
+                    SPI_WORK_DIVIDER,S_total_writes,S_image_sectors,S_stall_samples,u_player.u_audio.O_underflows);
+                S_test_pass=1; $display("PASS: performance startup and 90-degree rotation with continuous audio"); $finish;
+            end
+            check_pixel(321,201,0);
+            S_switch_start=$time; key(2); wait_image(1,2);
+            S_switch_duration=$time-S_switch_start;
+            $display("PERF_SWITCH divider=%0d duration_ns=%0d",SPI_WORK_DIVIDER,S_switch_duration);
+            check_pixel(417,302,1);
+            for(S_perf_rotation=1;S_perf_rotation<=4;S_perf_rotation=S_perf_rotation+1) begin
+                S_switch_start=$time; key(8); wait_image(1,S_perf_rotation+2);
+                $display("PERF_ROTATE divider=%0d rotation=%0d duration_ns=%0d",
+                    SPI_WORK_DIVIDER,S_perf_rotation%4,$time-S_switch_start);
+            end
+            if(S_total_writes!=6*307200 || S_image_sectors!=6*1801 ||
+               S_memory_error || S_card_error || u_player.u_audio.O_underflows!=0 || S_stall_samples<100)
+                fail("performance image counts, memory, protocol or continuous audio failed");
+            $display("PERF_TOTAL divider=%0d writes=%0d image_sectors=%0d samples=%0d underflows=%0d",
+                SPI_WORK_DIVIDER,S_total_writes,S_image_sectors,S_stall_samples,u_player.u_audio.O_underflows);
+            S_test_pass=1; $display("PASS: performance startup, switch and all rotations with continuous audio"); $finish;
+        end
         if($test$plusargs("NATIVE_MEDIA")) begin
             repeat(12) @(negedge S_host); S_reset=0;
             send_byte("A"); send_byte("0"); send_byte(13);
@@ -360,7 +472,8 @@ module tb_lean_player_core #(
         S_test_pass=1; $display("PASS: lean player four files, UART/keys, concurrent WAV, bad-file skip and card recovery"); $finish;
     end
     initial begin
-        if($test$plusargs("BOARD_MEDIA")) #(64'd12000000000);
+        if($test$plusargs("PERFORMANCE")) #(64'd36000000000);
+        else if($test$plusargs("BOARD_MEDIA")) #(64'd12000000000);
         else #1000000000;
         fail("watchdog");
     end

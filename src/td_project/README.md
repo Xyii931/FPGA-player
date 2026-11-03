@@ -5,14 +5,14 @@
 | [lean_player.al](lean_player.al) | `lean_player_top` | 图片与音频播放器 | `../constraints/player.adc`、`player.sdc` |
 | [p0_hdmi.al](p0_hdmi.al) | `p0_hdmi_top` | 基础HDMI视频诊断 | `../constraints/p0_hdmi.adc`、`p0_hdmi.sdc` |
 
-目标器件为 `EG4S20BG256`，验证环境为Anlogic TD V6.2.168116。主工程引用46份Verilog文件，诊断工程引用19份，每个工程另引用两份约束。相对路径以本目录为基准，须保持仓库结构。测试台和仿真替身不加入综合工程。
+目标器件为 `EG4S20BG256`，验证环境为Anlogic TD V6.2.168116。主工程引用47份Verilog文件，诊断工程引用19份，每个工程另引用两份约束。相对路径以本目录为基准，须保持仓库结构。测试台和仿真替身不加入综合工程。
 
 ## GUI操作
 
 1. 打开仓库中的 `lean_player.al`。使用其他目录中的副本时，须同步源码、约束和参考依赖。
 2. 从源码重新综合 `syn_1`，再运行 `phy_1`。只有确认源码和综合参数一致后，才可复用已有综合数据库。
-3. 保持工程的 `MultiSeed` 开启。工程固定seed 3、一个任务，依次执行布线、独立 `fix_hold` 和bit生成。
-4. 查看 `lean_player_Runs/phy_1/seed_3/` 中的 `lean_player_phy.ts` 与 `lean_player_pr.timing`，确认最终setup/hold非负，并检查严重告警、引脚和约束覆盖。
+3. 保持工程的 `MultiSeed` 开启。工程固定seed 2、一个任务，依次执行布线、独立 `fix_hold` 和bit生成。
+4. 查看 `lean_player_Runs/phy_1/seed_2/` 中的 `lean_player_phy.ts` 与 `lean_player_pr.timing`，确认最终setup/hold非负，并检查严重告警、引脚和约束覆盖。
 
 `MultiSeed` 为TD的流程名称；此配置仅执行一次运行。bit生成成功与时序、严重诊断验收分别判断。
 
@@ -51,11 +51,11 @@
 
 ## 实现参数与报告
 
-主工程采用面积优先映射和high打包力度：`gate map_mode area_prior`、`gate pack_effort high`。布局固定seed 3、策略2、high力度。
+主工程采用面积优先映射和high打包力度：`gate map_mode area_prior`、`gate pack_effort high`。布局固定seed 2、策略2、high力度。
 
 布线采用 `route fix_hold off`，主工程同时关闭 `route multi_try_route_bad_qor_check`；参数先设置再提交。完成 `route` 后独立执行 `fix_hold`，最终时序在hold修复后检查。不得省略独立hold修复或以布线前报告代替最终时序。
 
-脚本在 `open_project -single_run` 上下文设置实际参数，并保存 `*_place.params`、`*_route.params`。GUI流程由工程的 `MultiSeed` 配置指定seed，子任务应出现 `set_param place seed 3`；子任务的 `flow enable_seed` 显示off时，应结合上层配置和实际place命令确认。
+脚本在 `open_project -single_run` 上下文设置实际参数，并保存 `*_place.params`、`*_route.params`。GUI流程由工程的 `MultiSeed` 配置指定seed，子任务应出现 `set_param place seed 2`；子任务的 `flow enable_seed` 显示off时，应结合上层配置和实际place命令确认。
 
 结果保存在 `.local/td-build/<项目>/<批次>/`，模块检查另有模块名子目录。`summary.json` 记录实际阶段、错误、严重告警、资源和时序：
 
@@ -79,7 +79,7 @@
 
 顶层通过带初值计数器产生16个50 MHz周期、约320 ns的PLL启动复位，业务复位不重启PLL。PLL相位、初值映射、启动脉宽和lock须结合TD报告与硬件检查。
 
-视频总时序800×525、有效640×480，25 MHz对应约59.52 Hz；音频为48 kHz PCM24及ACR。TF卡SPI初始化约200 kHz，工作约6.25 MHz（`WORK_DIVIDER=8`）。SDRAM采用器件集成原语，无需外接芯片。
+视频总时序800×525、有效640×480，25 MHz对应约59.52 Hz；音频为48 kHz PCM24及ACR。TF卡SPI初始化约200 kHz，工作约8.333 MHz（`WORK_DIVIDER=6`）。SDRAM采用器件集成原语，无需外接芯片。
 
 厂商HDMI加密核、 `hdmi_phy_warpper.v` 和 `lane_lvds_10_1.v` 位于 `reference/lab_ex5_i2s/src/user_source/hdl_source/`。PLL和SDRAM包装的参数来源见源码注释及[参考资料说明](../../reference/README.md)。
 

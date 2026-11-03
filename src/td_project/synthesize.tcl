@@ -99,12 +99,11 @@ if {[catch {
         set step place
         load_run_param -run phy_1
         if {$project_name eq "lean_player"} {
-            # Validated physical configuration for the current mapped design.
-            # The default strategy hit a local incremental-route conflict.
+            # Fixed placement seed, strategy and effort for lean_player.
             set_param flow enable_seed on
             # open_project -single_run uses the active in-memory properties.
-            # -run only updates the saved project and did not affect place.
-            set_param place seed 3
+            # Apply parameters to that context before committing the step.
+            set_param place seed 2
             set_param place pr_strategy 2
             set_param place effort high
         }
